@@ -1,0 +1,255 @@
+// Storage layer. All data lives in chrome.storage.local under one key; nothing
+// leaves the machine. The backend is injectable so the same code runs in Node tests.
+//
+// Writes are serialised (read-modify-write under a lock). navigator.locks is used
+// when available because it also covers the popup, full-page tab and service worker,
+// which are separate JS contexts; otherwise an in-process promise queue is used.
+
+import { isValidDateStr } from './dates.js';
+import {
+  DEFAULT_SETTINGS, LIMITS, normalizeItem, normalizeSettings,
+} from './model.js';
+
+export const STORAGE_KEY = 'dayline:v1';
+export const LOCK_NAME = 'dayline-store';
+export const EXPORT_FORMAT_VERSION = 1;
+export const MAX_IMPORT_CHARS = 5_000_000;
+
+const PATCHABLE = ['title', 'notes', 'type', 'date', 'time', 'endTime', 'recurrence', 'reminders'];
+
+export function createChromeBackend(area = globalThis.chrome?.storage?.local) {
+  if (!area) throw new Error('chrome.storage.local is not available');
+  return {
+    async get(key) {
+      const result = await area.get(key);
+      return result[key];
+    },
+    async set(key, value) {
+      await area.set({ [key]: value });
+    },
+  };
+}
+
+export function createMemoryBackend(delayMs = 0) {
+  const data = new Map();
+  const wait = () => (delayMs ? new Promise((r) => setTimeout(r, delayMs)) : Promise.resolve());
+  return {
+    async get(key) {
+      await wait();
+      return data.has(key) ? structuredClone(data.get(key)) : undefined;
+    },
+    async set(key, value) {
+      await wait();
+      data.set(key, structuredClone(value));
+    },
+  };
+}
+
+const emptyState = () => ({ version: 1, items: [], settings: { ...DEFAULT_SETTINGS } });
+
+export function createStore(backend, opts = {}) {
+  const now = opts.now ?? Date.now;
+  const newId = opts.newId ?? (() => globalThis.crypto.randomUUID());
+  const useLocks = opts.useLocks ?? Boolean(globalThis.navigator?.locks);
+  let chain = Promise.resolve();
+
+  function withLock(fn) {
+    if (useLocks) return globalThis.navigator.locks.request(LOCK_NAME, fn);
+    const run = chain.then(fn);
+    chain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  async function load() {
+    const raw = await backend.get(STORAGE_KEY);
+    if (!raw || !Array.isArray(raw.items)) return emptyState();
+    return { version: 1, items: raw.items, settings: normalizeSettings(raw.settings) };
+  }
+
+  const save = (state) => backend.set(STORAGE_KEY, state);
+
+  /** Load, apply fn(state), save. Nothing is saved if fn throws. */
+  const mutate = (fn) =>
+    withLock(async () => {
+      const state = await load();
+      const result = await fn(state);
+      await save(state);
+      return result;
+    });
+
+  const findIndex = (state, id) => {
+    const i = state.items.findIndex((it) => it.id === id);
+    if (i < 0) throw new Error(`item not found: ${id}`);
+    return i;
+  };
+
+  return {
+    async list() {
+      return structuredClone((await load()).items);
+    },
+
+    async get(id) {
+      const item = (await load()).items.find((it) => it.id === id);
+      return item ? structuredClone(item) : null;
+    },
+
+    add(input) {
+      return mutate((state) => {
+        if (state.items.length >= LIMITS.items) throw new RangeError('item limit reached');
+        const t = now();
+        const item = normalizeItem(
+          {
+            ...input,
+            id: newId(),
+            done: false,
+            doneAt: null,
+            completedDates: [],
+            createdAt: t,
+            updatedAt: t,
+          },
+          t,
+        );
+        state.items.push(item);
+        return structuredClone(item);
+      });
+    },
+
+    update(id, patch) {
+      return mutate((state) => {
+        const i = findIndex(state, id);
+        const merged = { ...state.items[i] };
+        for (const key of PATCHABLE) if (key in patch) merged[key] = patch[key];
+        const t = now();
+        merged.updatedAt = t;
+        state.items[i] = normalizeItem(merged, t);
+        return structuredClone(state.items[i]);
+      });
+    },
+
+    /** Recurring items need `occurrenceDate`; one-off items ignore it. */
+    setDone(id, done, occurrenceDate) {
+      return mutate((state) => {
+        const i = findIndex(state, id);
+        const item = { ...state.items[i] };
+        const t = now();
+        if (item.recurrence) {
+          if (!isValidDateStr(occurrenceDate)) throw new TypeError('occurrenceDate required');
+          const set = new Set(item.completedDates);
+          if (done) set.add(occurrenceDate);
+          else set.delete(occurrenceDate);
+          item.completedDates = [...set];
+        } else {
+          item.done = Boolean(done);
+          item.doneAt = item.done ? t : null;
+        }
+        item.updatedAt = t;
+        state.items[i] = normalizeItem(item, t);
+        return structuredClone(state.items[i]);
+      });
+    },
+
+    remove(id) {
+      return mutate((state) => {
+        const before = state.items.length;
+        state.items = state.items.filter((it) => it.id !== id);
+        return state.items.length < before;
+      });
+    },
+
+    async getSettings() {
+      return { ...(await load()).settings };
+    },
+
+    updateSettings(patch) {
+      return mutate((state) => {
+        state.settings = normalizeSettings({ ...state.settings, ...patch });
+        return { ...state.settings };
+      });
+    },
+
+    async exportJson() {
+      const { items, settings } = await load();
+      return JSON.stringify(
+        {
+          app: 'dayline',
+          formatVersion: EXPORT_FORMAT_VERSION,
+          exportedAt: new Date(now()).toISOString(),
+          settings,
+          items,
+        },
+        null,
+        2,
+      );
+    },
+
+    /**
+     * Import a Dayline export. Every item is re-validated; invalid ones are skipped.
+     * mode 'merge': add new ids, replace existing ones only if the file's copy is newer.
+     * mode 'replace': swap everything for the file's valid items (refuses if none are valid).
+     * @returns {{added:number,updated:number,unchanged:number,skipped:number,errors:string[]}}
+     */
+    async importJson(text, { mode = 'merge' } = {}) {
+      if (mode !== 'merge' && mode !== 'replace') throw new RangeError('invalid import mode');
+      if (typeof text !== 'string' || text.length > MAX_IMPORT_CHARS) {
+        throw new RangeError('import file too large');
+      }
+      let doc;
+      try {
+        doc = JSON.parse(text);
+      } catch {
+        throw new SyntaxError('import file is not valid JSON');
+      }
+      if (
+        !doc || doc.app !== 'dayline' || doc.formatVersion !== EXPORT_FORMAT_VERSION
+        || !Array.isArray(doc.items)
+      ) {
+        throw new TypeError('not a Dayline export file');
+      }
+      if (doc.items.length > LIMITS.items) throw new RangeError('too many items in file');
+
+      const incoming = new Map();
+      const errors = [];
+      let skipped = 0;
+      for (const [n, raw] of doc.items.entries()) {
+        try {
+          const item = normalizeItem(raw, now());
+          // An item without its own updatedAt must never beat a stored copy, otherwise
+          // re-importing the same hand-edited file would overwrite newer local edits.
+          incoming.set(item.id, { item, stamp: Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0 });
+        } catch (e) {
+          skipped++;
+          if (errors.length < 5) errors.push(`item ${n}: ${e.message}`);
+        }
+      }
+      if (mode === 'replace' && doc.items.length > 0 && incoming.size === 0) {
+        throw new Error('no valid items in file; nothing was replaced');
+      }
+
+      return mutate((state) => {
+        const summary = { added: 0, updated: 0, unchanged: 0, skipped, errors };
+        if (mode === 'replace') {
+          state.items = [...incoming.values()].map((e) => e.item);
+          summary.added = incoming.size;
+          if (doc.settings) state.settings = normalizeSettings(doc.settings);
+          return summary;
+        }
+        const byId = new Map(state.items.map((it) => [it.id, it]));
+        for (const { item, stamp } of incoming.values()) {
+          const existing = byId.get(item.id);
+          if (!existing) {
+            if (byId.size >= LIMITS.items) throw new RangeError('item limit reached');
+            byId.set(item.id, item);
+            summary.added++;
+          } else if (stamp > existing.updatedAt) {
+            byId.set(item.id, item);
+            summary.updated++;
+          } else {
+            summary.unchanged++;
+          }
+        }
+        state.items = [...byId.values()];
+        return summary;
+      });
+    },
+  };
+}

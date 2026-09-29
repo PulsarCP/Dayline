@@ -1,0 +1,10 @@
+{
+  "name": "dayline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private Chrome extension for schedules, events and reminders.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
