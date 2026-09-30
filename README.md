@@ -5,13 +5,13 @@ Everything is stored locally in `chrome.storage.local`. There is no server, no a
 
 ## Status
 
-Phase 1 of 4 is done: the data layer. There is no real UI yet.
+Phases 1 and 2 of 4 are done: the data layer and the popup. Reminders do not fire yet (phase 3).
 
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Manifest, data model, storage, recurrence, reminder maths, quick-add parser, JSON export/import | done |
-| 2 | Popup: quick-add, today view, mark done | next |
-| 3 | Background worker: alarms, notifications (snooze / mark done), toolbar badge | |
+| 2 | Popup: quick-add with live preview, Today / Upcoming / General, mark done, delete, overdue, dark/light, icons | done |
+| 3 | Background worker: alarms, notifications (snooze / mark done), toolbar badge | next |
 | 4 | Full-page app: month calendar, "All" list incl. undated items, search and filters, dark/light, settings | |
 
 ## Load it in Chrome
@@ -27,7 +27,9 @@ After pulling changes, press the reload icon on the extension's card.
 Requires Node 20+ (tested on 22). No dependencies.
 
 ```
-npm test
+npm test                         # unit tests
+node tools/make-icons.mjs        # regenerate icons/
+python3 tests/e2e/popup_drive.py # optional: drives the real popup in Chromium (needs Playwright)
 ```
 
 Library code in `src/lib/` is pure (no `chrome.*` calls) except the storage adapter in `store.js`, so it is fully testable in Node.

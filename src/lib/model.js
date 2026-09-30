@@ -117,9 +117,19 @@ export function isDoneOn(item, date) {
   return item.recurrence ? item.completedDates.includes(date) : item.done;
 }
 
-export const DEFAULT_SETTINGS = Object.freeze({ allDayReminderTime: '09:00' });
+export const DEFAULT_SETTINGS = Object.freeze({
+  allDayReminderTime: '09:00', // when all-day items "start" for reminder purposes
+  defaultReminderMin: 10, // minutes before start for new timed items; null = no default reminder
+});
 
 export function normalizeSettings(raw) {
   const t = raw?.allDayReminderTime;
-  return { allDayReminderTime: isValidTimeStr(t) ? t : DEFAULT_SETTINGS.allDayReminderTime };
+  const m = raw?.defaultReminderMin;
+  let defaultReminderMin = DEFAULT_SETTINGS.defaultReminderMin;
+  if (m === null) defaultReminderMin = null;
+  else if (Number.isInteger(m) && m >= 0 && m <= LIMITS.maxOffsetMin) defaultReminderMin = m;
+  return {
+    allDayReminderTime: isValidTimeStr(t) ? t : DEFAULT_SETTINGS.allDayReminderTime,
+    defaultReminderMin,
+  };
 }

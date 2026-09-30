@@ -80,7 +80,16 @@ test('isDoneOn: one-off vs per-occurrence', () => {
 });
 
 test('settings fall back to defaults', () => {
-  assert.deepEqual(normalizeSettings({ allDayReminderTime: '08:30' }), { allDayReminderTime: '08:30' });
-  assert.deepEqual(normalizeSettings({ allDayReminderTime: 'x' }), { allDayReminderTime: '09:00' });
-  assert.deepEqual(normalizeSettings(undefined), { allDayReminderTime: '09:00' });
+  assert.deepEqual(normalizeSettings({ allDayReminderTime: '08:30' }), { allDayReminderTime: '08:30', defaultReminderMin: 10 });
+  assert.deepEqual(normalizeSettings({ allDayReminderTime: 'x' }), { allDayReminderTime: '09:00', defaultReminderMin: 10 });
+  assert.deepEqual(normalizeSettings(undefined), { allDayReminderTime: '09:00', defaultReminderMin: 10 });
+});
+
+test('defaultReminderMin: null means none, invalid values fall back to 10', () => {
+  assert.equal(normalizeSettings({ defaultReminderMin: null }).defaultReminderMin, null);
+  assert.equal(normalizeSettings({ defaultReminderMin: 0 }).defaultReminderMin, 0);
+  assert.equal(normalizeSettings({ defaultReminderMin: 60 }).defaultReminderMin, 60);
+  for (const bad of [-1, 1.5, '10', 99999999, NaN]) {
+    assert.equal(normalizeSettings({ defaultReminderMin: bad }).defaultReminderMin, 10);
+  }
 });

@@ -3,13 +3,53 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <title>Dayline</title>
-    <style>
-      body { font: 14px system-ui, sans-serif; margin: 0; padding: 16px; width: 280px; }
-    </style>
+    <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <h1 style="font-size: 16px; margin: 0 0 8px">Dayline</h1>
-    <p style="margin: 0">Foundation loaded. The popup UI arrives in phase 2.</p>
+    <main class="app">
+      <header class="top">
+        <div class="brand">
+          <img src="../../icons/icon-32.png" width="22" height="22" alt="" />
+          <span class="name">Dayline</span>
+        </div>
+        <div class="date-label" id="date-label"></div>
+      </header>
+
+      <form id="add-form" class="add" autocomplete="off">
+        <div class="add-row">
+          <input
+            id="add-input"
+            type="text"
+            maxlength="300"
+            spellcheck="false"
+            placeholder="Add something…  “dentist tomorrow 3pm”"
+            aria-label="Quick add"
+          />
+          <button type="submit" class="btn-add" id="add-btn" aria-label="Add"></button>
+        </div>
+        <div class="add-meta">
+          <div class="preview" id="preview" aria-live="polite"></div>
+          <label class="remind" title="Default reminder for new items">
+            <span class="sr-only">Default reminder</span>
+            <select id="add-reminder"></select>
+          </label>
+        </div>
+      </form>
+
+      <nav class="tabs" role="tablist" aria-label="Views" id="tabs"></nav>
+
+      <section class="list" id="list" role="tabpanel" aria-live="polite"></section>
+
+      <footer class="foot">
+        <label class="show-done">
+          <input type="checkbox" id="show-done" />
+          <span>Show completed</span>
+        </label>
+        <span class="foot-note" id="foot-note"></span>
+      </footer>
+    </main>
+    <script type="module" src="popup.js"></script>
   </body>
 </html>
