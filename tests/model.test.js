@@ -7,8 +7,8 @@ const base = { id: 'a1', title: 'Test' };
 test('minimal item gets sane defaults', () => {
   const it = normalizeItem(base, 1000);
   assert.deepEqual(it, {
-    id: 'a1', title: 'Test', notes: '', type: 'task', date: null, time: null, endTime: null,
-    recurrence: null, reminders: [], done: false, doneAt: null, completedDates: [],
+    id: 'a1', title: 'Test', notes: '', type: 'task', date: null, endDate: null, time: null, endTime: null,
+    recurrence: null, categoryId: null, reminders: [], done: false, doneAt: null, completedDates: [],
     createdAt: 1000, updatedAt: 1000,
   });
 });
@@ -80,9 +80,9 @@ test('isDoneOn: one-off vs per-occurrence', () => {
 });
 
 test('settings fall back to defaults', () => {
-  assert.deepEqual(normalizeSettings({ allDayReminderTime: '08:30' }), { allDayReminderTime: '08:30', defaultReminderMin: 10 });
-  assert.deepEqual(normalizeSettings({ allDayReminderTime: 'x' }), { allDayReminderTime: '09:00', defaultReminderMin: 10 });
-  assert.deepEqual(normalizeSettings(undefined), { allDayReminderTime: '09:00', defaultReminderMin: 10 });
+  assert.deepEqual(normalizeSettings({ allDayReminderTime: '08:30' }), { allDayReminderTime: '08:30', defaultReminderMin: 10, snoozeMin: 10 });
+  assert.deepEqual(normalizeSettings({ allDayReminderTime: 'x' }), { allDayReminderTime: '09:00', defaultReminderMin: 10, snoozeMin: 10 });
+  assert.deepEqual(normalizeSettings(undefined), { allDayReminderTime: '09:00', defaultReminderMin: 10, snoozeMin: 10 });
 });
 
 test('defaultReminderMin: null means none, invalid values fall back to 10', () => {

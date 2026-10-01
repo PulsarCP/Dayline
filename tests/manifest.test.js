@@ -11,6 +11,9 @@ test('manifest is MV3 and every referenced file exists', () => {
   assert.equal(manifest.manifest_version, 3);
   assert.ok(existsSync(join(root, manifest.background.service_worker)));
   assert.ok(existsSync(join(root, manifest.action.default_popup)));
+  assert.ok(existsSync(join(root, manifest.options_ui.page)));
+  assert.equal(manifest.options_ui.open_in_tab, true);
+  for (const size of Object.values(manifest.icons)) assert.ok(existsSync(join(root, size)));
 });
 
 test('permissions stay minimal and there is no remote access', () => {
@@ -22,7 +25,7 @@ test('permissions stay minimal and there is no remote access', () => {
 });
 
 test('library code never touches chrome.* directly except the storage adapter', () => {
-  for (const f of ['dates', 'recurrence', 'model', 'reminders', 'parser']) {
+  for (const f of ['dates', 'recurrence', 'model', 'reminders', 'parser', 'views', 'scheduler']) {
     const src = readFileSync(join(root, 'src/lib', `${f}.js`), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '');

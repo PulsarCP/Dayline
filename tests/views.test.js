@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeItem } from '../src/lib/model.js';
 import {
-  buildViews, formatDate, formatDay, formatWhen, offsetLabel, remindersFor, remindersSummary, repeatLabel,
+  buildViews, categoryOf, formatDate, formatDay, formatRange, formatWhen, spanLabel, offsetLabel, remindersFor, remindersSummary, repeatLabel,
 } from '../src/lib/views.js';
 
 // Wednesday 30 Sep 2026, 10:00 local
@@ -124,4 +124,86 @@ test('formatDate uses fixed three-letter months regardless of locale data', () =
   assert.equal(formatDate('2026-10-07', '2026-09-30'), 'Wed 7 Oct');
   assert.equal(formatDate('2027-01-05', '2026-09-30'), 'Tue 5 Jan 2027');
   assert.equal(formatDate('2026-09-30'), 'Wed 30 Sep');
+});
+
+// ---------- multi-day items, sections, counts ----------
+
+test('a multi-day item shows on each day of its span with Day N of M', () => {
+  const fair = mk({ title: 'Job Fair', date: '2026-10-06', endDate: '2026-10-09' });
+  const v = buildViews([fair], NOW);
+  assert.deepEqual(v.upcoming.groups.map((g) => g.date), ['2026-10-06', '2026-10-07']); // horizon is 7 Oct
+  assert.deepEqual(v.upcoming.groups.map((g) => g.rows[0].span), [{ index: 1, total: 4 }, { index: 2, total: 4 }]);
+  assert.equal(v.counts.upcoming, 1); // one item, not two days
+});
+
+test('an ongoing multi-day item is in Today, with its day number', () => {
+  const trip = mk({ title: 'Trip', date: '2026-09-29', endDate: '2026-10-02', time: '08:00' });
+  const v = buildViews([trip], NOW);
+  assert.deepEqual(titles(v.today.rows), ['Trip']);
+  assert.deepEqual(v.today.rows[0].span, { index: 2, total: 4 });
+  assert.deepEqual(v.today.overdue, []); // its start time passed but it is still running
+  assert.deepEqual(v.upcoming.groups.map((g) => g.date), ['2026-10-01', '2026-10-02']);
+  assert.equal(v.counts.today, 1);
+});
+
+test('a multi-day item is overdue only after its last day', () => {
+  const over = mk({ title: 'Over', date: '2026-09-25', endDate: '2026-09-28' });
+  const sameDay = mk({ title: 'Ends today', date: '2026-09-28', endDate: '2026-09-30' });
+  const v = buildViews([over, sameDay], NOW);
+  assert.deepEqual(titles(v.today.overdue), ['Over']);
+  assert.equal(v.today.overdue[0].date, '2026-09-28'); // dated by when it was due
+  assert.deepEqual(titles(v.today.rows), ['Ends today']);
+});
+
+test('a multi-day item starting beyond the horizon goes to Later; done ones follow showDone', () => {
+  const far = mk({ title: 'Far', date: '2026-11-10', endDate: '2026-11-12' });
+  assert.deepEqual(titles(buildViews([far], NOW).upcoming.later), ['Far']);
+  const done = mk({ title: 'Was', date: '2026-09-20', endDate: '2026-09-22', done: true, doneAt: 3 });
+  assert.deepEqual(buildViews([done], NOW).today.completed, []);
+  assert.deepEqual(titles(buildViews([done], NOW, { showDone: true }).today.completed), ['Was']);
+});
+
+test('upcoming count counts distinct items, not occurrences', () => {
+  const daily = mk({ date: '2026-09-01', recurrence: { freq: 'daily' } });
+  const one = mk({ date: '2026-10-02' });
+  const v = buildViews([daily, one], NOW);
+  assert.equal(v.upcoming.groups.length, 7);
+  assert.equal(v.counts.upcoming, 2);
+});
+
+test('category filter: all, none, one section', () => {
+  const items = [
+    mk({ title: 'w1', date: '2026-09-30', categoryId: 'work' }),
+    mk({ title: 'w2', categoryId: 'work' }),
+    mk({ title: 's1', date: '2026-09-30', categoryId: 'study' }),
+    mk({ title: 'n1', date: '2026-09-30' }),
+    mk({ title: 'n2' }),
+  ];
+  const all = buildViews(items, NOW);
+  assert.deepEqual(all.counts, { today: 3, upcoming: 0, general: 2 });
+  const work = buildViews(items, NOW, { category: 'work' });
+  assert.deepEqual(titles(work.today.rows), ['w1']);
+  assert.deepEqual(titles(work.general), ['w2']);
+  const none = buildViews(items, NOW, { category: 'none' });
+  assert.deepEqual(titles(none.today.rows), ['n1']);
+  assert.deepEqual(titles(none.general), ['n2']);
+  assert.deepEqual(buildViews(items, NOW, { category: 'ghost' }).counts, { today: 0, upcoming: 0, general: 0 });
+});
+
+test('categoryOf tolerates missing sections', () => {
+  const cats = [{ id: 'c1', name: 'Work', color: 'red' }];
+  assert.equal(categoryOf(mk({ categoryId: 'c1' }), cats).name, 'Work');
+  assert.equal(categoryOf(mk({ categoryId: 'gone' }), cats), null);
+  assert.equal(categoryOf(mk({}), cats), null);
+});
+
+test('formatRange / spanLabel / formatWhen for spans', () => {
+  assert.equal(formatRange(mk({ date: '2026-10-07', endDate: '2026-10-08' }), '2026-09-30'), 'Wed 7 – Thu 8 Oct');
+  assert.equal(formatRange(mk({ date: '2026-10-30', endDate: '2026-11-02' }), '2026-09-30'), 'Fri 30 Oct – Mon 2 Nov');
+  assert.equal(formatRange(mk({ date: '2026-12-30', endDate: '2027-01-02' }), '2026-09-30'), 'Wed 30 Dec – Sat 2 Jan 2027');
+  assert.equal(formatRange(mk({ date: '2027-03-10', endDate: '2027-03-12' }), '2026-09-30'), 'Wed 10 – Fri 12 Mar 2027');
+  assert.equal(formatRange(mk({ date: '2026-10-07' }), '2026-09-30'), 'Wed 7 Oct');
+  assert.equal(spanLabel({ index: 2, total: 3 }), 'Day 2 of 3');
+  assert.equal(spanLabel(null), '');
+  assert.equal(formatWhen(mk({ date: '2026-10-07', endDate: '2026-10-08', time: '18:00', endTime: '12:00' })), '18:00 → 12:00');
 });

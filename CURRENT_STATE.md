@@ -1,77 +1,84 @@
 # CURRENT_STATE
 
-Handoff for the next phase's chat. Updated at the end of **Phase 2 (popup)**. Phase 1 was the data layer.
+Handoff for the next chat. Updated at the end of **Phase 3** (reminders, notifications, badge) together with multi-day events, sections, item editing and the options page.
 
-Repo: https://github.com/PulsarCP/Dayline (branch `main`). Plain JavaScript ES modules, Manifest V3, no build step, no runtime dependencies. Tests: `npm test` (Node built-in runner).
+Repo: https://github.com/PulsarCP/Dayline (branch `main`). Plain JavaScript ES modules, Manifest V3 (v0.3.0), no build step, no runtime dependencies. Tests: `npm test` (Node built-in runner, ~140 tests). End-to-end: `python3 tests/e2e/e2e.py` (Playwright + Chromium).
 
 ## Decisions so far
 
-- Name: **Dayline**. Chrome only, loaded unpacked, no Web Store. English UI. No sync in v1.
-- Dates are local `"YYYY-MM-DD"` strings, times are `"HH:MM"` strings. No timestamps for scheduling, so no timezone/DST shifting.
-- `date: null` means a general / undated item. Undated items cannot fire reminders.
-- All-day items (date but no time) count as `settings.allDayReminderTime` (default `09:00`) for reminders.
-- Recurring items are completed per occurrence via `completedDates`, one-off items use `done`.
+- Name **Dayline**. Chrome only, loaded unpacked, no Web Store. English UI. No sync in v1.
+- Dates are local `"YYYY-MM-DD"` strings, times `"HH:MM"`. No timestamps for scheduling, so no timezone/DST shifting.
+- `date: null` = general / undated item. Undated items cannot have reminders.
+- All-day items (date, no time) count as `settings.allDayReminderTime` (default `09:00`) for reminders.
+- Recurring items complete per occurrence (`completedDates`); one-off items use `done`.
+- A multi-day item has `endDate` after `date`. It never repeats (a recurrence drops `endDate`). It shows on every day of the span; reminders fire before its first day only; it is overdue after its last day.
+- Sections are user-defined (`{id, name, color}`), max 20, unique names (case-insensitive), colours are names from `COLORS` (never CSS). Deleting a section keeps its items (they become unsectioned).
 - Permissions: `storage`, `alarms`, `notifications` only.
-- v2 backlog (remind Daniel): categories/colors/tags, priority, subtasks, `chrome.storage.sync`, keyboard shortcuts, right-click "Add to schedule", `.ics` export, daily agenda notification, undo.
+- Daniel wants these v2 items remembered and raised later: priority levels, subtasks/checklists, `chrome.storage.sync`, keyboard shortcuts, right-click "Add to schedule", `.ics` export, daily agenda notification, undo. (Sections were pulled into v1.)
 
-## Module interface (`src/lib/`)
+## Module interfaces
 
-### `dates.js`
-`pad`, `toDateStr(Date)`, `parseDateStr(str) -> Date|null`, `isValidDateStr`, `isValidTimeStr`, `timeToMinutes`, `timeStrOf(Date)`, `addDays(str, n)`, `addMonths(str, n)` (clamps), `daysInMonth(y, m0)`, `diffDays(a, b)`, `weekdayOf(str)` (0 = Sunday), `combine(dateStr, timeStr) -> Date`.
+### `src/lib/dates.js`
+`pad`, `toDateStr(Date)`, `parseDateStr(str) -> Date|null`, `isValidDateStr`, `isValidTimeStr`, `timeToMinutes`, `timeStrOf(Date)`, `addDays`, `addMonths` (clamps), `daysInMonth`, `diffDays(a, b)`, `weekdayOf` (0 = Sunday), `combine(dateStr, timeStr) -> Date`.
 
-### `recurrence.js`
-Rule: `{ freq: 'daily'|'weekly'|'monthly', interval, weekdays?: number[], until?: 'YYYY-MM-DD' }`.
-`normalizeRecurrence(rule) -> rule|null` (throws on invalid), `occurrencesBetween(item, from, to) -> string[]` (window capped at `MAX_SPAN_DAYS` = 800), `nextOccurrence(item, after, {includeAfter}) -> string|null`, `FREQS`.
+### `src/lib/recurrence.js`
+Rule: `{freq: 'daily'|'weekly'|'monthly', interval, weekdays?, until?}`. `normalizeRecurrence`, `occurrencesBetween(item, from, to)` (window capped at 800 days; a one-off item yields only its own `date`), `nextOccurrence`.
 
-### `model.js`
-`normalizeItem(raw, now?) -> item` (throws on invalid; builds a fresh object from known fields only), `isDoneOn(item, date)`, `normalizeSettings`, `DEFAULT_SETTINGS`, `LIMITS`, `TYPES`.
+### `src/lib/model.js`
+`normalizeItem(raw, now?)` (throws on invalid; builds a fresh object from known fields), `normalizeCategory`, `normalizeSettings`, `isDoneOn(item, date)`, `lastDayOf(item)`, `LIMITS`, `TYPES`, `COLORS`, `SNOOZE_CHOICES`, `DEFAULT_SETTINGS`.
 
-Item: `{ id, title, notes, type: 'task'|'event', date, time, endTime, recurrence, reminders: [{offsetMin}], done, doneAt, completedDates, createdAt, updatedAt }`.
-Limits: title 200, notes 2000, 10 reminders per item, offsets up to 60 days, 5000 items.
+Item: `{id, title, notes, type: 'task'|'event', date, endDate, time, endTime, recurrence, categoryId, reminders: [{offsetMin}], done, doneAt, completedDates, createdAt, updatedAt}`. `endTime` must be after `time` only for single-day items.
+Settings: `{allDayReminderTime: '09:00', defaultReminderMin: 10|null, snoozeMin: 5|10|15|30|60}`.
+Limits: title 200, notes 2000, 10 reminders, offsets up to 60 days, 5000 items, 20 sections, section name 30, span up to 366 days.
 
-### `store.js`
-`createStore(backend, {now, newId, useLocks}) ->` async API:
-`list()`, `get(id)`, `add(input)`, `update(id, patch)` (patchable: title, notes, type, date, time, endTime, recurrence, reminders), `setDone(id, done, occurrenceDate?)` (recurring items require `occurrenceDate`), `remove(id)`, `getSettings()`, `updateSettings(patch)`, `exportJson()`, `importJson(text, {mode: 'merge'|'replace'}) -> {added, updated, unchanged, skipped, errors}`.
-Backends: `createChromeBackend(area?)` (wraps `chrome.storage.local`), `createMemoryBackend(delayMs?)` (tests).
-All writes are serialised (`navigator.locks` when present, else an in-process queue). Returned objects are copies.
-Storage key: `dayline:v1`. Export format: `{ app: 'dayline', formatVersion: 1, exportedAt, settings, items }`.
+### `src/lib/store.js`
+`createStore(backend, {now, newId, useLocks})` async API: `list`, `getState` (items + categories + settings in one read), `get`, `add`, `update` (patchable: title, notes, type, date, endDate, time, endTime, recurrence, categoryId, reminders; moving `date` keeps a span's length), `setDone(id, done, occurrenceDate?)`, `remove`, `listCategories`, `addCategory`, `updateCategory`, `removeCategory -> {removed, itemsCleared}`, `getSettings`, `updateSettings`, `exportJson`, `importJson(text, {mode: 'merge'|'replace'}) -> {added, updated, unchanged, skipped, categoriesAdded, errors}`.
+Backends: `createChromeBackend(area?)`, `createMemoryBackend(delayMs?)`. Writes are serialised (`navigator.locks`, else a promise queue). Storage key `dayline:v1`; data without `categories` (older versions) loads fine. Export: `{app: 'dayline', formatVersion: 1, exportedAt, settings, categories, items}`. Merge import matches sections by id, then by name, and remaps items.
 
-### `reminders.js`
-`upcomingReminders(items, now: Date, {horizonDays = 14, limit = 200, allDayTime}) -> [{itemId, date, reminderId, fireAt}]`, `occurrenceStart`, `alarmName({itemId, date, reminderId})` / `parseAlarmName(name)` (format `rem|itemId|date|reminderId`), `isOverdue(item, now)`, `badgeCount(items, now)`.
+### `src/lib/parser.js`
+`parseQuickAdd(text, now) -> {title, date, endDate, time, recurrence, categoryTag, matched}`. Understands: today/tomorrow/tonight/day after tomorrow, weekday names (next such day after today), `5 oct`, `oct 5 2027`, `15/12` (DD/MM), ISO dates, times (`15:00`, `3pm`, `noon`), `in 2 hours/days/weeks`, repeats (`daily`, `every 2 weeks`, `every weekday`, `every other friday`), ranges (`7-8 october`, `oct 7-9`, `from 7 to 9 oct`, `30 oct - 2 nov`, `dec 30 - jan 2`, ISO `to` ISO), `for N days` (2..60), `#section` (first tag wins, must start with a letter). Reversed or same-day ranges are not ranges.
 
-### `parser.js`
-`parseQuickAdd(text, now = new Date()) -> { title, date, time, recurrence, matched: [{kind, text}] }`. Supported phrases are listed at the top of the file. DD/MM date order. Weekday names mean the next such day strictly after today. A bare "at 5" is not parsed.
+### `src/lib/reminders.js`
+`remindersBetween(items, fromMs, toMs)`, `upcomingReminders(items, now, {horizonDays, limit})`, `missedReminders(items, now, {lookbackMin})`, `isStillRelevant`, `occurrenceStart`, `alarmName` / `parseAlarmName` (`rem|itemId|date|offsetMin`), `isOverdue`, `badgeCount`.
 
-### `views.js` (phase 2)
-`buildViews(items, now, {showDone}) -> {today:{overdue,rows,completed}, upcoming:{groups,later}, general, counts}`; rows are `{item, date, done, overdue}` (one per occurrence for recurring items). Upcoming = next 7 days, `later` capped at 50. Also `formatDate`, `formatDay`, `formatWhen`, `repeatLabel`, `offsetLabel`, `remindersSummary`, `REMINDER_CHOICES`, `remindersFor({date,time}, defaultMin)`.
+### `src/lib/views.js`
+`buildViews(items, now, {showDone, category: 'all'|'none'|id}) -> {today: {overdue, rows, completed}, upcoming: {groups, later}, general, counts}`. Rows: `{item, date, done, overdue, span: {index, total}|null}`. Upcoming = next 7 days (`later` capped at 50); `counts.upcoming` counts distinct items. Also `categoryOf`, `formatDate`, `formatDay`, `formatRange`, `formatWhen`, `spanLabel`, `repeatLabel`, `offsetLabel`, `remindersSummary`, `REMINDER_CHOICES`, `remindersFor`.
 
-## Popup (phase 2)
+### `src/lib/scheduler.js`
+`createScheduler({api, store, backend, now})` where `api` is the `chrome` object (needs `alarms`, `notifications`, `action`, optional `runtime.getURL`). Returns `sync`, `requestSync`, `boot` (catch-up then sync), `handleAlarm`, `handleButton(id, index)` (0 = Snooze, 1 = Mark done), `handleClick`, `updateBadge`, `whenIdle`. All operations run one at a time. Derives everything from storage (the service worker may be killed at any time). Bookkeeping keys: `dayline:snoozes`, `dayline:fired`. Alarms: `rem|...` per upcoming reminder (14 days, max 300), `snz|itemId|date` per pending snooze, `dl-tick` (hourly resync), `dl-midnight` (badge refresh). Catch-up: reminders due in the last 12 h that are still relevant, max 5 notifications plus one summary.
 
-- `src/popup/popup.html` + `popup.css` + `popup.js` (chrome wiring) + `app.js` (`mountPopup(document, store, {now})`, testable with any store).
-- Quick-add with live preview chips (date, time, repeat, reminder) using `parseQuickAdd`; tabs Today / Upcoming / General with counts (red when something is overdue); check circle = done (per occurrence for recurring); trash button with two-step confirm; "Show completed" toggle; default-reminder picker; re-renders on `chrome.storage.onChanged`.
-- New items get a reminder from `settings.defaultReminderMin` (default 10; null = none). All-day items get "At start" (= `allDayReminderTime`), undated items none.
-- Tab and "show completed" choice are remembered in `localStorage` (convenience only, wrapped in try/catch).
-- Settings gained `defaultReminderMin`. Icons: `icons/` generated by `tools/make-icons.mjs`. Manifest is 0.2.0.
-- All user text goes through `textContent`/text nodes (verified: an `<img onerror>` title does not execute).
+### `src/background.js`
+Registers listeners synchronously and delegates to the scheduler. Storage changes trigger a debounced sync.
 
-## Not built yet
+### UI
+- `src/ui/theme.css` (variables, light/dark, controls, section colours), `src/ui/dom.js` (`createH`, `createIcon`), `src/ui/item-form.js` (`createItemForm(doc, {item, categories, onSave, onCancel, onDelete})`, reusable for the calendar page).
+- `src/popup/` (`app.js` has `mountPopup(document, store, {now, openOptions})`): quick-add with live preview chips, section select, Today / Upcoming / General tabs, section filter chips (shown once sections exist), edit view (click a row or the pencil), two-step delete. Tab, filter and "show completed" are remembered in `localStorage` (convenience only).
+- `src/options/` (`app.js` has `mountOptions(document, store, {version, download, confirmReplace, now})`): sections (add, rename, recolour, delete), default reminder, all-day reminder time, snooze length, export/import. Opened as a full tab (`options_ui.open_in_tab`) because file pickers can close an extension popup.
 
-- `src/background.js` is an empty placeholder.
-- Nothing calls `chrome.alarms` / `chrome.notifications` / `chrome.action.setBadgeText` yet.
-- No UI for export/import, and no way to edit an existing item yet (only add, mark done, delete). Editing (title, date, time, repeat, reminders, notes) belongs in the phase 4 full-page app, or a small edit form in the popup.
-- The popup's Upcoming count counts each occurrence of a recurring item, so a daily habit adds 7.
+## Lessons learned (keep)
+
+- **Notification `iconUrl` must be a full extension URL** (`chrome.runtime.getURL(...)`). A relative path resolves against the calling script (`src/...`) and Chrome rejects the whole notification. The unit tests with a fake could not catch this; the e2e run did.
+- Never pass `null` to `Element.replaceChildren`: it inserts the text "null".
+- Take dark-mode screenshots after the 150 ms colour transition has finished.
+- `import()` is not allowed in a service worker, so e2e tests drive the scheduler from an extension page instead.
 
 ## Testing status
 
-80 tests (79 pass, 1 skipped), same result under `TZ=Europe/Rome`, `America/New_York`, `UTC`, `Pacific/Auckland`.
+- 140 unit tests (139 pass, 1 skipped: `navigator.locks` path, Node 22 lacks it) pass under `TZ=Europe/Rome`, `America/New_York`, `Pacific/Auckland`, `UTC`.
+- `tests/e2e/e2e.py` (headless Chromium 141, extension loaded unpacked): all checks pass. Covers quick-add ranges and `#tags`, sections and filters, edit form, options page (sections, settings, export, merge/replace import, corrupt file), real worker: alarm created after adding an item, notification shown, Snooze, snoozed reminder returning, Mark done clearing alarms and badge, startup catch-up, no console errors.
 
-Verified in a real browser (headless Chromium 141 with the extension loaded unpacked, `tests/e2e/popup_drive.py`): the manifest loads and the service worker starts; the popup renders from real `chrome.storage.local`; quick-add lands on the right tab; mark done, show completed, delete confirm, default-reminder persistence, XSS resistance, light and dark screenshots. No console errors.
+Not verified (needs Daniel's real Chrome): how the OS actually displays notifications (Windows/macOS/Linux settings, Focus modes), `requireInteraction` behaviour per OS, popup size and focus in headed Chrome, behaviour after a real browser restart (alarm persistence is handled by re-deriving on startup, but only simulated), and the `navigator.locks` write path.
 
-Not verified (needs Daniel's real Chrome): toolbar popup sizing and focus behaviour in headed Chrome, the `navigator.locks` write path (Node 22 lacks it; skipped), and anything alarm/notification related (not built yet).
+## Known limitations / ideas
 
-## Things to keep in mind for phase 2+
+- Chrome allows two notification buttons, so only one snooze length (configurable in settings). Other lengths would need a snooze picker in the popup.
+- A multi-day item cannot also repeat.
+- A multi-day item appears once per day in Upcoming (7 days max), counted once.
+- Recurring items: missed past occurrences are not flagged overdue and not counted in the badge (by design).
+- Editing a repeating item edits the whole series.
+- There is no month calendar yet (phase 4), and no search.
+- Rendering rule: every user-supplied string goes through `textContent`/text nodes, never `innerHTML` (an `<img onerror>` title is verified inert).
 
-- Popup width is fixed at 380px, list height capped at 330px (Chrome popups max out around 800x600).
-- Render every user-supplied string with `textContent`, never `innerHTML` (titles and notes come from the user and from imported files).
-- MV3 service workers are killed when idle: never use `setTimeout` for reminders; re-derive alarms from storage on startup, on install and after every write.
-- Recurring items: missed past occurrences are intentionally not counted in the badge and not flagged overdue.
+## Next: Phase 4
+
+Full-page app (open in a tab): month calendar with multi-day bars, an "All" list including undated items, search and filters (status, date range, section), reuse `createItemForm` and `buildViews`/`occurrencesBetween`. Then remind Daniel of the v2 list above.

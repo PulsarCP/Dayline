@@ -7,12 +7,15 @@
 //   relative   in 30 minutes, in 2 hours, in 3 days, in 2 weeks, in 1 month
 //   repeat     daily, weekly, monthly, every day, every 2 weeks, every weekday,
 //              every monday, every other friday
+// Multi-day:  7-8 october, oct 7-9, from 7 to 9 oct, 30 oct - 2 nov, dec 30 - jan 2,
+//             2026-10-07 to 2026-10-09, and "for 3 days" after any date (tomorrow for 3 days)
+// Sections:   #work, #study (first one wins; the caller maps it onto a real section)
 // Weekday names always mean the next such day strictly after today.
 // 3-letter weekday abbreviations only count after on/next/this/every (so "sat exam"
 // stays a title). A time with no date means today, or tomorrow if it already passed.
 
 import {
-  addDays, addMonths, combine, isValidDateStr, pad, timeStrOf, toDateStr, weekdayOf,
+  addDays, addMonths, combine, diffDays, isValidDateStr, pad, timeStrOf, toDateStr, weekdayOf,
 } from './dates.js';
 import { normalizeRecurrence } from './recurrence.js';
 
@@ -85,12 +88,26 @@ export function parseQuickAdd(input, now = new Date()) {
   let date = null;
   let time = null;
   let recurrence = null;
+  let endDate = null;
+  let categoryTag = null;
 
   const take = (res, kind) => {
     text = res.text;
     matched.push({ kind, text: res.matched });
     return res.value;
   };
+
+  // 0. Section tags: "#work". Must start with a letter, so "#12" and "C#" stay in the title.
+  for (let guard = 0; guard < 5; guard++) {
+    const tag = consume(
+      text,
+      /(?:^|\s)#([\p{L}][\p{L}\p{N}_-]{0,29})(?![\p{L}\p{N}_#-])/u,
+      (m) => m[1],
+    );
+    if (!tag) break;
+    const name = take(tag, 'section');
+    categoryTag ??= name;
+  }
 
   // 1. Recurrence
   let r = consume(text, /\bevery\s+weekdays?\b/i, () => ({
@@ -186,7 +203,34 @@ export function parseQuickAdd(input, now = new Date()) {
 
   // 5. Explicit dates
   if (!date) {
+    const SEP = '\\s*(?:-|\u2013|\u2014|to|until|till)\\s*';
+    const DAY = '(\\d{1,2})(?:st|nd|rd|th)?';
+    const OF = '(?:of\\s+)?';
+    const YEAR = '(?:,?\\s+(\\d{4}))?';
+    const mon = (name) => MONTHS[name.slice(0, 3).toLowerCase()];
+    const range = (m1, d1, m2, d2, year) => {
+      if (m1 === m2 && Number(d2) <= Number(d1)) return undefined; // "8-7 oct" is not a range
+      const start = resolveDate(year ? Number(year) : null, m1, Number(d1), today);
+      if (!start) return undefined;
+      const y = Number(start.slice(0, 4));
+      let end = buildDate(y, m2, Number(d2));
+      if (end && end < start) end = buildDate(y + 1, m2, Number(d2));
+      if (!end || end <= start || diffDays(start, end) > 366) return undefined;
+      return { date: start, endDate: end };
+    };
     const patterns = [
+      // ranges first, so "7-8 october" is not read as the single date "8 october"
+      [new RegExp(`\\b(?:from\\s+)?${DAY}${SEP}${DAY}\\s+${OF}${MONTH_RE}${YEAR}\\b`, 'i'),
+        (m) => range(mon(m[3]), m[1], mon(m[3]), m[2], m[4])],
+      [new RegExp(`\\b(?:from\\s+)?${MONTH_RE}\\s+${DAY}${SEP}${DAY}${YEAR}\\b`, 'i'),
+        (m) => range(mon(m[1]), m[2], mon(m[1]), m[3], m[4])],
+      [new RegExp(`\\b(?:from\\s+)?${DAY}\\s+${OF}${MONTH_RE}${SEP}${DAY}\\s+${OF}${MONTH_RE}${YEAR}\\b`, 'i'),
+        (m) => range(mon(m[2]), m[1], mon(m[4]), m[3], m[5])],
+      [new RegExp(`\\b(?:from\\s+)?${MONTH_RE}\\s+${DAY}${SEP}${MONTH_RE}\\s+${DAY}${YEAR}\\b`, 'i'),
+        (m) => range(mon(m[1]), m[2], mon(m[3]), m[4], m[5])],
+      [/\b(?:from\s+)?(\d{4}-\d{2}-\d{2})\s*(?:-|\u2013|\u2014|to|until|till)\s*(\d{4}-\d{2}-\d{2})\b/i,
+        (m) => (isValidDateStr(m[1]) && isValidDateStr(m[2]) && m[2] > m[1] && diffDays(m[1], m[2]) <= 366
+          ? { date: m[1], endDate: m[2] } : undefined)],
       [/\b(\d{4})-(\d{2})-(\d{2})\b/, (m) => (isValidDateStr(m[0]) ? m[0] : undefined)],
       [/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?\b/,
         (m) => resolveDate(m[3] ? Number(m[3]) : null, Number(m[2]) - 1, Number(m[1]), today)],
@@ -198,7 +242,13 @@ export function parseQuickAdd(input, now = new Date()) {
     for (const [re, accept] of patterns) {
       const d = consume(text, re, accept);
       if (d) {
-        date = take(d, 'date');
+        const v = take(d, 'date');
+        if (typeof v === 'object') {
+          date = v.date;
+          endDate = v.endDate;
+        } else {
+          date = v;
+        }
         break;
       }
     }
@@ -230,7 +280,17 @@ export function parseQuickAdd(input, now = new Date()) {
     date = time && combine(today, time) <= now ? addDays(today, 1) : today;
   }
 
-  // 8. Title
+  // 8. Duration: "tomorrow for 3 days" (not for repeating items)
+  if (date && !endDate && !recurrence) {
+    const dur = consume(text, /\bfor\s+(\d{1,2})\s+days?\b/i, (m) => {
+      const n = Number(m[1]);
+      return n >= 2 && n <= 60 ? n : undefined;
+    });
+    if (dur) endDate = addDays(date, take(dur, 'duration') - 1);
+  }
+  if (recurrence) endDate = null;
+
+  // 9. Title
   let title = text.replace(/\s+/g, ' ').trim();
   title = title.replace(/^(?:remind me (?:to|about)|reminder:?|todo:?)\s+/i, '');
   for (let i = 0; i < 3; i++) {
@@ -240,5 +300,5 @@ export function parseQuickAdd(input, now = new Date()) {
       .replace(/^[\s,;:.-]+|[\s,;:-]+$/g, '');
   }
 
-  return { title, date, time, recurrence, matched };
+  return { title, date, endDate, time, recurrence, categoryTag, matched };
 }

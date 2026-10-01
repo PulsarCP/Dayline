@@ -1,23 +1,16 @@
-// Popup UI. mountPopup() takes a Document and a store, so the same code runs in
-// the extension popup and in jsdom tests. All text is inserted with textContent /
-// text nodes, never innerHTML: titles come from the user and from imported files.
+// Popup UI. mountPopup() takes a Document and a store, so the same code runs in the
+// extension popup and in tests. All text is inserted with textContent / text nodes,
+// never innerHTML: titles come from the user and from imported files.
 
 import { toDateStr } from '../lib/dates.js';
+import { COLORS } from '../lib/model.js';
 import { parseQuickAdd } from '../lib/parser.js';
 import {
-  buildViews, formatDate, formatDay, formatWhen, offsetLabel, remindersFor, remindersSummary,
-  repeatLabel, REMINDER_CHOICES,
+  buildViews, categoryOf, formatDate, formatDay, formatRange, formatWhen, offsetLabel, remindersFor,
+  remindersSummary, repeatLabel, REMINDER_CHOICES, spanLabel,
 } from '../lib/views.js';
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const ICONS = {
-  plus: ['M12 5v14', 'M5 12h14'],
-  bell: ['M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9', 'M13.73 21a2 2 0 0 1-3.46 0'],
-  repeat: ['M17 1l4 4-4 4', 'M3 11V9a4 4 0 0 1 4-4h14', 'M7 23l-4-4 4-4', 'M21 13v2a4 4 0 0 1-4 4H3'],
-  trash: ['M3 6h18', 'M8 6V4h8v2', 'M19 6l-1 14H6L5 6', 'M10 11v6', 'M14 11v6'],
-  clock: ['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', 'M12 6v6l4 2'],
-  calendar: ['M3 4h18v18H3z', 'M16 2v4', 'M8 2v4', 'M3 10h18'],
-};
+import { createH, createIcon } from '../ui/dom.js';
+import { createItemForm } from '../ui/item-form.js';
 
 const TABS = [
   { id: 'today', label: 'Today' },
@@ -31,27 +24,43 @@ const EMPTY = {
   general: ['No general items', 'Things without a date live here. Add one without a day or time.'],
 };
 
-export function mountPopup(doc, store, { now = () => new Date(), animationMs = 450 } = {}) {
+const normTag = (s) => s.toLowerCase().replace(/[\s_-]+/g, '');
+
+export function mountPopup(doc, store, {
+  now = () => new Date(), animationMs = 450, openOptions = () => {},
+} = {}) {
   const win = doc.defaultView;
+  const h = createH(doc);
+  const icon = createIcon(doc);
   const $ = (id) => doc.getElementById(id);
   const el = {
+    main: $('main-view'),
     dateLabel: $('date-label'),
+    options: $('open-options'),
     form: $('add-form'),
     input: $('add-input'),
     addBtn: $('add-btn'),
     preview: $('preview'),
+    category: $('add-category'),
     reminder: $('add-reminder'),
     tabs: $('tabs'),
+    filters: $('filters'),
     list: $('list'),
     showDone: $('show-done'),
     note: $('foot-note'),
+    editView: $('edit-view'),
+    editBack: $('edit-back'),
+    editHeading: $('edit-heading'),
+    editBody: $('edit-body'),
   };
 
   const state = {
     tab: readPref('tab', 'today'),
+    filter: readPref('filter', 'all'), // 'all' | 'none' | section id
     showDone: readPref('showDone', '0') === '1',
     items: [],
-    settings: { allDayReminderTime: '09:00', defaultReminderMin: 10 },
+    categories: [],
+    settings: { allDayReminderTime: '09:00', defaultReminderMin: 10, snoozeMin: 10 },
     flashId: null,
     error: null,
     busy: false,
@@ -77,43 +86,30 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
     } catch { /* storage can be unavailable; it is only a convenience */ }
   }
 
-  function h(tag, props = {}, ...children) {
-    const node = doc.createElement(tag);
-    for (const [k, v] of Object.entries(props)) {
-      if (v == null || v === false) continue;
-      if (k === 'class') node.className = v;
-      else if (k === 'dataset') Object.assign(node.dataset, v);
-      else node.setAttribute(k, v === true ? '' : String(v));
-    }
-    for (const c of children.flat()) {
-      if (c == null || c === false) continue;
-      node.append(typeof c === 'object' ? c : doc.createTextNode(String(c)));
-    }
-    return node;
-  }
-
-  function icon(name) {
-    const svg = doc.createElementNS(SVG_NS, 'svg');
-    for (const [k, v] of Object.entries({
-      viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2',
-      'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true',
-    })) svg.setAttribute(k, v);
-    for (const d of ICONS[name]) {
-      const p = doc.createElementNS(SVG_NS, 'path');
-      p.setAttribute('d', d);
-      svg.append(p);
-    }
-    return svg;
-  }
-
   const todayStr = () => toDateStr(now());
+  const findCategoryByTag = (tag) => state.categories.find((c) => normTag(c.name) === normTag(tag));
+
+  function tagToName(tag) {
+    const words = tag.replace(/[_-]+/g, ' ').trim();
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+
+  function nextColor() {
+    const used = new Set(state.categories.map((c) => c.color));
+    return COLORS.find((c) => !used.has(c)) ?? COLORS[state.categories.length % COLORS.length];
+  }
 
   // ---------- data ----------
 
   async function load() {
-    const [items, settings] = await Promise.all([store.list(), store.getSettings()]);
-    state.items = items;
-    state.settings = settings;
+    const s = await store.getState();
+    state.items = s.items;
+    state.categories = s.categories;
+    state.settings = s.settings;
+    if (state.filter !== 'all' && state.filter !== 'none'
+      && !state.categories.some((c) => c.id === state.filter)) {
+      state.filter = 'all';
+    }
   }
 
   function scheduleRender() {
@@ -131,12 +127,13 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
   // ---------- rendering ----------
 
   function render() {
-    const views = buildViews(state.items, now(), { showDone: state.showDone });
+    const views = buildViews(state.items, now(), { showDone: state.showDone, category: state.filter });
     el.dateLabel.textContent = formatDate(todayStr());
     renderTabs(views);
+    renderFilters();
     renderList(views);
     renderFooter(views);
-    renderReminderSelect();
+    renderSelects();
     renderPreview();
     state.flashId = null;
   }
@@ -154,15 +151,38 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
     }
   }
 
+  function renderFilters() {
+    const cats = state.categories;
+    el.filters.hidden = cats.length === 0;
+    if (!cats.length) return;
+    const chip = (value, label, color) => h('button', {
+      type: 'button', class: 'fchip', 'aria-pressed': String(state.filter === value), dataset: { filter: value },
+    }, color && h('i', { class: 'dot', dataset: { color } }), label);
+    el.filters.replaceChildren(
+      chip('all', 'All'),
+      ...cats.map((c) => chip(c.id, c.name, c.color)),
+      chip('none', 'No section'),
+    );
+  }
+
   function renderFooter(views) {
     const open = views.counts.today;
     el.note.textContent = open === 0 ? 'All clear today' : `${open} left today`;
     el.showDone.checked = state.showDone;
   }
 
-  function renderReminderSelect() {
-    const want = String(state.settings.defaultReminderMin ?? 'none');
-    if (el.reminder.value !== want) el.reminder.value = want;
+  function renderSelects() {
+    const wantRem = String(state.settings.defaultReminderMin ?? 'none');
+    if (el.reminder.value !== wantRem) el.reminder.value = wantRem;
+
+    const cur = el.category.value;
+    el.category.replaceChildren(
+      h('option', { value: '' }, 'No section'),
+      ...state.categories.map((c) => h('option', { value: c.id }, c.name)),
+    );
+    const preferred = state.filter !== 'all' && state.filter !== 'none' ? state.filter : cur;
+    el.category.value = state.categories.some((c) => c.id === preferred) ? preferred : '';
+    el.category.hidden = state.categories.length === 0;
   }
 
   function renderPreview() {
@@ -171,17 +191,30 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
     if (state.error) {
       kids.push(h('span', { class: 'chip error' }, state.error));
     } else if (!text) {
-      kids.push('Try “gym every monday 7am” or “call mom in 2 hours”');
+      kids.push('Try “gym every monday 7am”, “7-9 oct trip” or “report friday #work”');
     } else {
       const p = parseQuickAdd(text, now());
       const today = todayStr();
       if (!p.title) kids.push(h('span', { class: 'chip error' }, 'Add a title'));
-      if (p.date) kids.push(h('span', { class: 'chip' }, icon('calendar'), formatDay(p.date, today)));
-      else kids.push(h('span', { class: 'chip plain' }, 'General · no date'));
+      if (p.endDate) {
+        kids.push(h('span', { class: 'chip' }, icon('calendar'), formatRange({ date: p.date, endDate: p.endDate }, today)));
+      } else if (p.date) {
+        kids.push(h('span', { class: 'chip' }, icon('calendar'), formatDay(p.date, today)));
+      } else {
+        kids.push(h('span', { class: 'chip plain' }, 'General · no date'));
+      }
       if (p.time) kids.push(h('span', { class: 'chip' }, icon('clock'), p.time));
       if (p.recurrence) kids.push(h('span', { class: 'chip' }, icon('repeat'), repeatLabel(p.recurrence)));
       const rem = remindersFor(p, state.settings.defaultReminderMin);
       if (rem.length) kids.push(h('span', { class: 'chip plain' }, icon('bell'), offsetLabel(rem[0].offsetMin)));
+      if (p.categoryTag) {
+        const match = findCategoryByTag(p.categoryTag);
+        if (match) {
+          kids.push(h('span', { class: 'chip sect' }, h('i', { class: 'dot', dataset: { color: match.color } }), match.name));
+        } else {
+          kids.push(h('span', { class: 'chip plain' }, icon('plus'), `New section “${tagToName(p.categoryTag)}”`));
+        }
+      }
     }
     el.preview.replaceChildren(...kids);
   }
@@ -226,10 +259,15 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
   function rowEl(row, mode, today) {
     const { item } = row;
     const meta = [];
+
     if (row.overdue) {
-      meta.push(h('span', { class: 'late' }, `Overdue · ${formatDay(row.date, today)}${item.time ? ` ${item.time}` : ''}`));
+      meta.push(h('span', { class: 'late' }, `Overdue · ${formatDay(row.date, today)}${!item.endDate && item.time ? ` ${item.time}` : ''}`));
+      if (item.endDate) meta.push(h('span', {}, formatRange(item, today)));
     } else if (mode === 'later' || mode === 'completed') {
-      meta.push(h('span', {}, `${formatDay(row.date, today)} · ${formatWhen(item)}`));
+      meta.push(h('span', {}, `${formatRange(item, today)} · ${formatWhen(item)}`));
+    } else if (row.span) {
+      meta.push(h('span', { class: 'span' }, spanLabel(row.span)));
+      meta.push(h('span', {}, `${formatRange(item, today)}${item.time && row.span.index === 1 ? ` · ${formatWhen(item)}` : ''}`));
     } else if (row.date) {
       meta.push(h('span', {}, formatWhen(item)));
     }
@@ -237,6 +275,8 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
     if (!row.done && item.date && item.reminders.length) {
       meta.push(h('span', {}, icon('bell'), remindersSummary(item)));
     }
+    const cat = state.filter === 'all' ? categoryOf(item, state.categories) : null;
+    if (cat) meta.push(h('span', { class: 'sect' }, h('i', { class: 'dot', dataset: { color: cat.color } }), cat.name));
 
     const check = h('input', {
       type: 'checkbox',
@@ -245,11 +285,11 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
     });
     check.checked = row.done;
 
+    const edit = h('button', {
+      type: 'button', class: 'iconbtn edit', 'aria-label': `Edit ${item.title}`, title: 'Edit',
+    }, icon('pencil'));
     const del = h('button', {
-      type: 'button',
-      class: 'del',
-      'aria-label': `Delete ${item.title}`,
-      title: 'Delete',
+      type: 'button', class: 'iconbtn del', 'aria-label': `Delete ${item.title}`, title: 'Delete',
     }, icon('trash'), h('span', { class: 'lbl' }, item.recurrence ? 'Delete series?' : 'Delete?'));
 
     return h('li', {
@@ -258,14 +298,23 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
     },
     check,
     h('div', { class: 'body' }, h('div', { class: 'title' }, item.title), meta.length > 0 && h('div', { class: 'meta' }, meta)),
-    del);
+    h('div', { class: 'acts' }, edit, del));
   }
 
-  // ---------- interactions ----------
+  // ---------- adding ----------
 
   function showError(message) {
     state.error = message;
     renderPreview();
+  }
+
+  async function resolveSection(tag) {
+    if (!tag) return el.category.value || null;
+    const match = findCategoryByTag(tag);
+    if (match) return match.id;
+    const created = await store.addCategory({ name: tagToName(tag), color: nextColor() });
+    state.categories = [...state.categories, created];
+    return created.id;
   }
 
   async function submit(ev) {
@@ -277,12 +326,15 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
     if (!p.title) return showError('Add a title first');
     state.busy = true;
     try {
+      const categoryId = await resolveSection(p.categoryTag);
       const item = await store.add({
         title: p.title,
         date: p.date,
+        endDate: p.endDate,
         time: p.time,
         recurrence: p.recurrence,
-        type: p.time ? 'event' : 'task',
+        categoryId,
+        type: p.time || p.endDate ? 'event' : 'task',
         reminders: remindersFor(p, state.settings.defaultReminderMin),
       });
       el.input.value = '';
@@ -290,6 +342,11 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
       state.flashId = item.id;
       state.tab = !item.date ? 'general' : item.date <= todayStr() ? 'today' : 'upcoming';
       writePref('tab', state.tab);
+      // Keep the new item visible: a filter for another section would hide it.
+      if (state.filter !== 'all' && state.filter !== (item.categoryId ?? 'none')) {
+        state.filter = 'all';
+        writePref('filter', 'all');
+      }
       await load();
       render();
       state.flashId = item.id; // keep the highlight if a storage event re-renders right away
@@ -299,7 +356,43 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
     } finally {
       state.busy = false;
     }
+    return undefined;
   }
+
+  // ---------- editing ----------
+
+  function openEdit(id) {
+    const item = state.items.find((it) => it.id === id);
+    if (!item) return;
+    el.editHeading.textContent = 'Edit';
+    el.editBody.replaceChildren(createItemForm(doc, {
+      item,
+      categories: state.categories,
+      onSave: async (values) => {
+        await store.update(id, values);
+        state.flashId = id;
+        closeEdit();
+        await refresh();
+      },
+      onCancel: closeEdit,
+      onDelete: async () => {
+        await store.remove(id);
+        closeEdit();
+        await refresh();
+      },
+    }));
+    el.main.hidden = true;
+    el.editView.hidden = false;
+  }
+
+  function closeEdit() {
+    el.editView.hidden = true;
+    el.main.hidden = false;
+    el.editBody.replaceChildren();
+    el.input.focus();
+  }
+
+  // ---------- interactions ----------
 
   async function onToggle(cb) {
     const li = cb.closest('li.row');
@@ -336,22 +429,32 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
     el.reminder.append(h('option', { value: String(c.value ?? 'none') }, c.label));
   }
   el.addBtn.append(icon('plus'));
+  el.options.append(icon('sliders'));
+  el.editBack.append(icon('back'));
+
+  const selectTab = (id) => {
+    state.tab = id;
+    writePref('tab', id);
+    render();
+  };
 
   el.tabs.addEventListener('click', (ev) => {
     const btn = ev.target.closest('.tab');
-    if (!btn) return;
-    state.tab = btn.dataset.tab;
-    writePref('tab', state.tab);
-    render();
+    if (btn) selectTab(btn.dataset.tab);
   });
   el.tabs.addEventListener('keydown', (ev) => {
     if (ev.key !== 'ArrowRight' && ev.key !== 'ArrowLeft') return;
     const i = TABS.findIndex((t) => t.id === state.tab);
     const next = TABS[(i + (ev.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length];
-    state.tab = next.id;
-    writePref('tab', state.tab);
-    render();
+    selectTab(next.id);
     el.tabs.querySelector(`[data-tab="${next.id}"]`).focus();
+  });
+  el.filters.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.fchip');
+    if (!btn) return;
+    state.filter = btn.dataset.filter;
+    writePref('filter', state.filter);
+    render();
   });
 
   el.form.addEventListener('submit', submit);
@@ -369,12 +472,22 @@ export function mountPopup(doc, store, { now = () => new Date(), animationMs = 4
     writePref('showDone', state.showDone ? '1' : '0');
     render();
   });
+  el.options.addEventListener('click', () => openOptions());
+  el.editBack.addEventListener('click', closeEdit);
+  doc.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !el.editView.hidden) closeEdit();
+  });
+
   el.list.addEventListener('change', (ev) => {
     if (ev.target.matches('input.check')) onToggle(ev.target);
   });
   el.list.addEventListener('click', (ev) => {
-    const btn = ev.target.closest('button.del');
-    if (btn) onDelete(btn);
+    const del = ev.target.closest('button.del');
+    if (del) return onDelete(del);
+    const li = ev.target.closest('li.row');
+    if (!li || ev.target.closest('input.check')) return undefined;
+    if (ev.target.closest('.body') || ev.target.closest('button.edit')) openEdit(li.dataset.id);
+    return undefined;
   });
 
   const tick = win.setInterval(() => render(), 60_000);

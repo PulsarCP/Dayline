@@ -2,12 +2,12 @@
 // leaves the machine. The backend is injectable so the same code runs in Node tests.
 //
 // Writes are serialised (read-modify-write under a lock). navigator.locks is used
-// when available because it also covers the popup, full-page tab and service worker,
+// when available because it also covers the popup, options tab and service worker,
 // which are separate JS contexts; otherwise an in-process promise queue is used.
 
-import { isValidDateStr } from './dates.js';
+import { addDays, diffDays, isValidDateStr } from './dates.js';
 import {
-  DEFAULT_SETTINGS, LIMITS, normalizeItem, normalizeSettings,
+  DEFAULT_SETTINGS, LIMITS, normalizeCategory, normalizeItem, normalizeSettings,
 } from './model.js';
 
 export const STORAGE_KEY = 'dayline:v1';
@@ -15,7 +15,9 @@ export const LOCK_NAME = 'dayline-store';
 export const EXPORT_FORMAT_VERSION = 1;
 export const MAX_IMPORT_CHARS = 5_000_000;
 
-const PATCHABLE = ['title', 'notes', 'type', 'date', 'time', 'endTime', 'recurrence', 'reminders'];
+const PATCHABLE = [
+  'title', 'notes', 'type', 'date', 'endDate', 'time', 'endTime', 'recurrence', 'categoryId', 'reminders',
+];
 
 export function createChromeBackend(area = globalThis.chrome?.storage?.local) {
   if (!area) throw new Error('chrome.storage.local is not available');
@@ -45,7 +47,11 @@ export function createMemoryBackend(delayMs = 0) {
   };
 }
 
-const emptyState = () => ({ version: 1, items: [], settings: { ...DEFAULT_SETTINGS } });
+const emptyState = () => ({
+  version: 1, items: [], categories: [], settings: { ...DEFAULT_SETTINGS },
+});
+
+const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
 
 export function createStore(backend, opts = {}) {
   const now = opts.now ?? Date.now;
@@ -63,7 +69,12 @@ export function createStore(backend, opts = {}) {
   async function load() {
     const raw = await backend.get(STORAGE_KEY);
     if (!raw || !Array.isArray(raw.items)) return emptyState();
-    return { version: 1, items: raw.items, settings: normalizeSettings(raw.settings) };
+    return {
+      version: 1,
+      items: raw.items,
+      categories: Array.isArray(raw.categories) ? raw.categories : [],
+      settings: normalizeSettings(raw.settings),
+    };
   }
 
   const save = (state) => backend.set(STORAGE_KEY, state);
@@ -83,9 +94,27 @@ export function createStore(backend, opts = {}) {
     return i;
   };
 
+  const assertCategoryExists = (state, id) => {
+    if (id != null && !state.categories.some((c) => c.id === id)) {
+      throw new RangeError('unknown section');
+    }
+  };
+
+  const assertNameFree = (state, name, exceptId) => {
+    if (state.categories.some((c) => c.id !== exceptId && sameName(c.name, name))) {
+      throw new RangeError('a section with that name already exists');
+    }
+  };
+
   return {
     async list() {
       return structuredClone((await load()).items);
+    },
+
+    /** Items, sections and settings from one consistent read. */
+    async getState() {
+      const { items, categories, settings } = await load();
+      return structuredClone({ items, categories, settings });
     },
 
     async get(id) {
@@ -96,6 +125,7 @@ export function createStore(backend, opts = {}) {
     add(input) {
       return mutate((state) => {
         if (state.items.length >= LIMITS.items) throw new RangeError('item limit reached');
+        assertCategoryExists(state, input.categoryId);
         const t = now();
         const item = normalizeItem(
           {
@@ -117,8 +147,15 @@ export function createStore(backend, opts = {}) {
     update(id, patch) {
       return mutate((state) => {
         const i = findIndex(state, id);
-        const merged = { ...state.items[i] };
+        const old = state.items[i];
+        const merged = { ...old };
         for (const key of PATCHABLE) if (key in patch) merged[key] = patch[key];
+        // Moving a multi-day item's start keeps its length unless the caller sets the end too.
+        if ('date' in patch && !('endDate' in patch) && old.date && old.endDate && patch.date
+          && isValidDateStr(patch.date)) {
+          merged.endDate = addDays(patch.date, diffDays(old.date, old.endDate));
+        }
+        assertCategoryExists(state, merged.categoryId);
         const t = now();
         merged.updatedAt = t;
         state.items[i] = normalizeItem(merged, t);
@@ -156,6 +193,55 @@ export function createStore(backend, opts = {}) {
       });
     },
 
+    // ---------- sections ----------
+
+    async listCategories() {
+      return structuredClone((await load()).categories);
+    },
+
+    addCategory({ name, color }) {
+      return mutate((state) => {
+        if (state.categories.length >= LIMITS.categories) throw new RangeError('section limit reached');
+        const cat = normalizeCategory({ id: newId(), name, color });
+        assertNameFree(state, cat.name);
+        state.categories.push(cat);
+        return { ...cat };
+      });
+    },
+
+    updateCategory(id, patch) {
+      return mutate((state) => {
+        const i = state.categories.findIndex((c) => c.id === id);
+        if (i < 0) throw new Error(`section not found: ${id}`);
+        const cat = normalizeCategory({
+          id,
+          name: 'name' in patch ? patch.name : state.categories[i].name,
+          color: 'color' in patch ? patch.color : state.categories[i].color,
+        });
+        assertNameFree(state, cat.name, id);
+        state.categories[i] = cat;
+        return { ...cat };
+      });
+    },
+
+    /** Deleting a section keeps its items; they just become unsectioned. */
+    removeCategory(id) {
+      return mutate((state) => {
+        const before = state.categories.length;
+        state.categories = state.categories.filter((c) => c.id !== id);
+        let cleared = 0;
+        for (const it of state.items) {
+          if (it.categoryId === id) {
+            it.categoryId = null;
+            cleared++;
+          }
+        }
+        return { removed: state.categories.length < before, itemsCleared: cleared };
+      });
+    },
+
+    // ---------- settings ----------
+
     async getSettings() {
       return { ...(await load()).settings };
     },
@@ -167,14 +253,17 @@ export function createStore(backend, opts = {}) {
       });
     },
 
+    // ---------- backup ----------
+
     async exportJson() {
-      const { items, settings } = await load();
+      const { items, categories, settings } = await load();
       return JSON.stringify(
         {
           app: 'dayline',
           formatVersion: EXPORT_FORMAT_VERSION,
           exportedAt: new Date(now()).toISOString(),
           settings,
+          categories,
           items,
         },
         null,
@@ -183,10 +272,12 @@ export function createStore(backend, opts = {}) {
     },
 
     /**
-     * Import a Dayline export. Every item is re-validated; invalid ones are skipped.
+     * Import a Dayline export. Every item and section is re-validated; invalid ones are skipped.
      * mode 'merge': add new ids, replace existing ones only if the file's copy is newer.
-     * mode 'replace': swap everything for the file's valid items (refuses if none are valid).
-     * @returns {{added:number,updated:number,unchanged:number,skipped:number,errors:string[]}}
+     *   Sections match by id, then by name, so importing the same backup twice adds nothing.
+     * mode 'replace': swap everything for the file's valid data (refuses if none is valid).
+     * @returns {{added:number,updated:number,unchanged:number,skipped:number,
+     *            categoriesAdded:number,errors:string[]}}
      */
     async importJson(text, { mode = 'merge' } = {}) {
       if (mode !== 'merge' && mode !== 'replace') throw new RangeError('invalid import mode');
@@ -206,9 +297,21 @@ export function createStore(backend, opts = {}) {
         throw new TypeError('not a Dayline export file');
       }
       if (doc.items.length > LIMITS.items) throw new RangeError('too many items in file');
+      const rawCats = Array.isArray(doc.categories) ? doc.categories.slice(0, 200) : [];
+
+      const errors = [];
+      const note = (msg) => { if (errors.length < 5) errors.push(msg); };
+
+      const incomingCats = [];
+      for (const [n, raw] of rawCats.entries()) {
+        try {
+          incomingCats.push(normalizeCategory(raw));
+        } catch (e) {
+          note(`section ${n}: ${e.message}`);
+        }
+      }
 
       const incoming = new Map();
-      const errors = [];
       let skipped = 0;
       for (const [n, raw] of doc.items.entries()) {
         try {
@@ -218,7 +321,7 @@ export function createStore(backend, opts = {}) {
           incoming.set(item.id, { item, stamp: Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0 });
         } catch (e) {
           skipped++;
-          if (errors.length < 5) errors.push(`item ${n}: ${e.message}`);
+          note(`item ${n}: ${e.message}`);
         }
       }
       if (mode === 'replace' && doc.items.length > 0 && incoming.size === 0) {
@@ -226,22 +329,54 @@ export function createStore(backend, opts = {}) {
       }
 
       return mutate((state) => {
-        const summary = { added: 0, updated: 0, unchanged: 0, skipped, errors };
+        const summary = {
+          added: 0, updated: 0, unchanged: 0, skipped, categoriesAdded: 0, errors,
+        };
+
+        // Decide the final section list and how file section ids map onto it.
+        const idMap = new Map();
+        let cats;
         if (mode === 'replace') {
-          state.items = [...incoming.values()].map((e) => e.item);
+          cats = [];
+        } else {
+          cats = [...state.categories];
+        }
+        for (const c of incomingCats) {
+          const sameId = cats.find((x) => x.id === c.id);
+          const byName = cats.find((x) => sameName(x.name, c.name));
+          if (sameId) idMap.set(c.id, sameId.id);
+          else if (byName) idMap.set(c.id, byName.id);
+          else if (cats.length < LIMITS.categories) {
+            cats.push(c);
+            idMap.set(c.id, c.id);
+            summary.categoriesAdded++;
+          } else {
+            note(`section "${c.name}" skipped: section limit reached`);
+          }
+        }
+        const remap = (item) => {
+          if (item.categoryId == null) return item;
+          return { ...item, categoryId: idMap.get(item.categoryId) ?? null };
+        };
+
+        if (mode === 'replace') {
+          state.categories = cats;
+          state.items = [...incoming.values()].map((e) => remap(e.item));
           summary.added = incoming.size;
           if (doc.settings) state.settings = normalizeSettings(doc.settings);
           return summary;
         }
+
+        state.categories = cats;
         const byId = new Map(state.items.map((it) => [it.id, it]));
         for (const { item, stamp } of incoming.values()) {
           const existing = byId.get(item.id);
           if (!existing) {
             if (byId.size >= LIMITS.items) throw new RangeError('item limit reached');
-            byId.set(item.id, item);
+            byId.set(item.id, remap(item));
             summary.added++;
           } else if (stamp > existing.updatedAt) {
-            byId.set(item.id, item);
+            byId.set(item.id, remap(item));
             summary.updated++;
           } else {
             summary.unchanged++;

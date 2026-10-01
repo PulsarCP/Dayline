@@ -3,16 +3,25 @@
 A small, private Chrome extension for schedules, events and reminders.
 Everything is stored locally in `chrome.storage.local`. There is no server, no account and no tracking.
 
-## Status
+## What it does
 
-Phases 1 and 2 of 4 are done: the data layer and the popup. Reminders do not fire yet (phase 3).
+- **Quick-add** with natural language and a live preview: `dentist tomorrow 3pm`, `gym every monday 7am`, `7-8 october Job Fair`, `trip tomorrow for 3 days`, `report friday #work`.
+- **Today / Upcoming / General** views. General holds items without a date.
+- **Multi-day events**, shown on every day they span ("Day 2 of 3").
+- **Your own sections** (Work, Study, ...) with colours. Filter by section, or type `#work` when adding.
+- **Mark done**, per occurrence for repeating items. Overdue items stay visible, in red.
+- **Repeating items**: daily, weekly (chosen weekdays), monthly, with an optional end date.
+- **Reminders**: several per item. Notifications have **Snooze** and **Mark done** buttons, reminders missed while Chrome was closed are shown on the next start, and the toolbar badge counts what is open today.
+- **Edit** any item (click it), **export / import** a JSON backup, light and dark themes.
+
+## Status
 
 | Phase | Scope | State |
 |---|---|---|
-| 1 | Manifest, data model, storage, recurrence, reminder maths, quick-add parser, JSON export/import | done |
-| 2 | Popup: quick-add with live preview, Today / Upcoming / General, mark done, delete, overdue, dark/light, icons | done |
-| 3 | Background worker: alarms, notifications (snooze / mark done), toolbar badge | next |
-| 4 | Full-page app: month calendar, "All" list incl. undated items, search and filters, dark/light, settings | |
+| 1 | Data model, storage, recurrence, reminder maths, quick-add parser, JSON export/import | done |
+| 2 | Popup: quick-add, Today / Upcoming / General, mark done, delete, overdue, dark/light, icons | done |
+| 3 | Background worker: alarms, notifications (snooze / mark done), catch-up, toolbar badge. Also: multi-day events, sections, item editing, options page | done |
+| 4 | Full-page app: month calendar, "All" list with search and filters | next |
 
 ## Load it in Chrome
 
@@ -21,18 +30,23 @@ Phases 1 and 2 of 4 are done: the data layer and the popup. Reminders do not fir
 3. Click **Load unpacked** and pick this folder (the one containing `manifest.json`)
 
 After pulling changes, press the reload icon on the extension's card.
+Settings, sections and backup live on the options page (the sliders icon in the popup, or the extension's "Details > Extension options").
+
+Notifications also need to be allowed for Chrome in your operating system's settings.
 
 ## Develop
 
 Requires Node 20+ (tested on 22). No dependencies.
 
 ```
-npm test                         # unit tests
-node tools/make-icons.mjs        # regenerate icons/
-python3 tests/e2e/popup_drive.py # optional: drives the real popup in Chromium (needs Playwright)
+npm test                    # unit tests (about 140)
+node tools/make-icons.mjs   # regenerate icons/
+python3 tests/e2e/e2e.py    # optional: end-to-end run in real Chromium (needs Playwright)
 ```
 
-Library code in `src/lib/` is pure (no `chrome.*` calls) except the storage adapter in `store.js`, so it is fully testable in Node.
+The unit tests cover everything in `src/lib/`, including the scheduler against a fake `chrome` API. `tests/e2e/e2e.py` loads the extension unpacked and drives the popup, options page and background worker against the real `chrome.*` APIs.
+
+Library code in `src/lib/` never touches `chrome.*` directly (the scheduler takes the API as a parameter; `store.js` has a small adapter), so it is testable in Node.
 
 ## Permissions
 
@@ -40,4 +54,4 @@ Only `storage`, `alarms` and `notifications`. No host permissions, no content sc
 
 ## Data and backup
 
-Use the export / import functions (UI in a later phase) to back up or move data. Exports are plain JSON. Imports are validated item by item.
+Use **Export backup** and **Import** on the options page to back up or move data. Exports are plain JSON. Imports are validated item by item and can merge into, or replace, what you have.

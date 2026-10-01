@@ -88,3 +88,21 @@ test('badgeCount: due today or earlier, open only; recurring counts only today',
   ];
   assert.equal(badgeCount(items, NOW), 3);
 });
+
+test('isOverdue for multi-day items: due at the end of the last day', () => {
+  assert.equal(isOverdue(mk({ date: '2026-09-28', endDate: '2026-09-30', time: '08:00' }), NOW), false);
+  assert.equal(isOverdue(mk({ date: '2026-09-27', endDate: '2026-09-29' }), NOW), true);
+  assert.equal(isOverdue(mk({ date: '2026-09-28', endDate: '2026-09-30', time: '08:00', endTime: '09:00' }), NOW), true);
+  assert.equal(isOverdue(mk({ date: '2026-09-28', endDate: '2026-09-30', time: '08:00', endTime: '18:00' }), NOW), false);
+});
+
+test('reminders of a multi-day item fire before its first day only', () => {
+  const it = mk({ date: '2026-10-07', endDate: '2026-10-09', time: '09:00', reminders: [{ offsetMin: 60 }] });
+  assert.deepEqual(upcomingReminders([it], NOW).map((r) => r.date), ['2026-10-07']);
+});
+
+test('badgeCount: an ongoing multi-day item counts once; a future one does not', () => {
+  const ongoing = mk({ date: '2026-09-29', endDate: '2026-10-02' });
+  const future = mk({ date: '2026-10-05', endDate: '2026-10-06' });
+  assert.equal(badgeCount([ongoing, future], NOW), 1);
+});

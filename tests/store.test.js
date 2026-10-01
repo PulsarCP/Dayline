@@ -117,10 +117,10 @@ test('navigator.locks path (only where the runtime has it)', async (t) => {
 
 test('settings', async () => {
   const s = fresh();
-  assert.deepEqual(await s.getSettings(), { allDayReminderTime: '09:00', defaultReminderMin: 10 });
-  assert.deepEqual(await s.updateSettings({ allDayReminderTime: '08:15' }), { allDayReminderTime: '08:15', defaultReminderMin: 10 });
-  assert.deepEqual(await s.updateSettings({ defaultReminderMin: null }), { allDayReminderTime: '08:15', defaultReminderMin: null });
-  assert.deepEqual(await s.updateSettings({ allDayReminderTime: 'garbage' }), { allDayReminderTime: '09:00', defaultReminderMin: null });
+  assert.deepEqual(await s.getSettings(), { allDayReminderTime: '09:00', defaultReminderMin: 10, snoozeMin: 10 });
+  assert.deepEqual(await s.updateSettings({ allDayReminderTime: '08:15' }), { allDayReminderTime: '08:15', defaultReminderMin: 10, snoozeMin: 10 });
+  assert.deepEqual(await s.updateSettings({ defaultReminderMin: null, snoozeMin: 30 }), { allDayReminderTime: '08:15', defaultReminderMin: null, snoozeMin: 30 });
+  assert.deepEqual(await s.updateSettings({ allDayReminderTime: 'garbage', snoozeMin: 7 }), { allDayReminderTime: '09:00', defaultReminderMin: null, snoozeMin: 10 });
 });
 
 test('export -> import round trip into an empty store', async () => {

@@ -1,7 +1,7 @@
 // View-model for the UI: turns the flat item list into the sections the popup
 // (and later the full-page app) shows, plus small formatting helpers. Pure, no DOM.
 
-import { addDays, parseDateStr, toDateStr } from './dates.js';
+import { addDays, diffDays, parseDateStr, toDateStr } from './dates.js';
 import { isDoneOn } from './model.js';
 import { occurrencesBetween } from './recurrence.js';
 import { isOverdue } from './reminders.js';
@@ -20,11 +20,19 @@ const doneLast = (a, b) => Number(a.done) - Number(b.done) || byTime(a, b);
 const byDateThenTime = (a, b) => a.date.localeCompare(b.date) || byTime(a, b);
 
 /**
- * A row is one thing to show: an item, or one occurrence of a recurring item.
- * @typedef {{item:object, date:string|null, done:boolean, overdue:boolean}} Row
+ * A row is one thing to show: an item, one occurrence of a recurring item, or one day
+ * of a multi-day item (`span` says which day: { index, total }, 1-based).
+ * @typedef {{item:object, date:string|null, done:boolean, overdue:boolean,
+ *            span:{index:number,total:number}|null}} Row
  */
 
+const row = (item, date, done, overdue = false, span = null) => ({ item, date, done, overdue, span });
+
 /**
+ * @param {object[]} items
+ * @param {Date} now
+ * @param {{showDone?: boolean, category?: 'all'|'none'|string}} [opts]
+ *   category: 'all' (default), 'none' (unsectioned only), or a section id.
  * @returns {{
  *  today: {overdue: Row[], rows: Row[], completed: Row[]},
  *  upcoming: {groups: {date:string, rows: Row[]}[], later: Row[]},
@@ -32,9 +40,12 @@ const byDateThenTime = (a, b) => a.date.localeCompare(b.date) || byTime(a, b);
  *  counts: {today:number, upcoming:number, general:number}
  * }}
  */
-export function buildViews(items, now, { showDone = false } = {}) {
+export function buildViews(items, now, { showDone = false, category = 'all' } = {}) {
   const today = toDateStr(now);
   const horizon = addDays(today, UPCOMING_DAYS);
+
+  if (category === 'none') items = items.filter((it) => !it.categoryId);
+  else if (category !== 'all') items = items.filter((it) => it.categoryId === category);
 
   const overdue = [];
   const todayRows = [];
@@ -43,15 +54,15 @@ export function buildViews(items, now, { showDone = false } = {}) {
   const later = [];
   const byDate = new Map();
 
-  const addUpcoming = (row) => {
-    if (!byDate.has(row.date)) byDate.set(row.date, []);
-    byDate.get(row.date).push(row);
+  const addUpcoming = (r) => {
+    if (!byDate.has(r.date)) byDate.set(r.date, []);
+    byDate.get(r.date).push(r);
   };
 
   for (const item of items) {
     if (!item.date) {
       if (item.done && !showDone) continue;
-      general.push({ item, date: null, done: item.done, overdue: false });
+      general.push(row(item, null, item.done));
       continue;
     }
 
@@ -59,29 +70,34 @@ export function buildViews(items, now, { showDone = false } = {}) {
       for (const date of occurrencesBetween(item, today, horizon)) {
         const done = isDoneOn(item, date);
         if (done && !showDone) continue;
-        const row = { item, date, done, overdue: false };
-        if (date === today) todayRows.push(row);
-        else addUpcoming(row);
+        if (date === today) todayRows.push(row(item, date, done));
+        else addUpcoming(row(item, date, done));
       }
       continue;
     }
 
-    if (item.done) {
-      if (!showDone) continue;
-      const row = { item, date: item.date, done: true, overdue: false };
-      if (item.date === today) todayRows.push(row);
-      else if (item.date < today) completed.push(row);
-      else if (item.date <= horizon) addUpcoming(row);
-      else later.push(row);
-      continue;
-    }
+    // One-off item, possibly spanning several days.
+    const last = item.endDate ?? item.date;
+    if (item.done && !showDone) continue;
 
-    const late = isOverdue(item, now);
-    const row = { item, date: item.date, done: false, overdue: late };
-    if (late) overdue.push(row);
-    else if (item.date <= today) todayRows.push(row);
-    else if (item.date <= horizon) addUpcoming(row);
-    else later.push(row);
+    if (!item.done && isOverdue(item, now)) {
+      overdue.push(row(item, last, false, true)); // dated by when it was due (its last day)
+    } else if (last < today) {
+      completed.push(row(item, item.date, true)); // only done items get here
+    } else if (item.date > horizon) {
+      later.push(row(item, item.date, item.done));
+    } else {
+      // Show it on every day of the span that falls between today and the horizon.
+      const total = item.endDate ? diffDays(item.date, item.endDate) + 1 : 0;
+      const from = item.date > today ? item.date : today;
+      const to = last < horizon ? last : horizon;
+      for (let d = from; d <= to; d = addDays(d, 1)) {
+        const span = total ? { index: diffDays(item.date, d) + 1, total } : null;
+        const r = row(item, d, item.done, false, span);
+        if (d === today) todayRows.push(r);
+        else addUpcoming(r);
+      }
+    }
   }
 
   overdue.sort(byDateThenTime);
@@ -95,16 +111,26 @@ export function buildViews(items, now, { showDone = false } = {}) {
     .map(([date, rows]) => ({ date, rows: rows.sort(doneLast) }));
 
   const open = (rows) => rows.filter((r) => !r.done).length;
+  // Upcoming counts things, not days: a daily habit or a 5-day trip counts once.
+  const upcomingItems = new Set();
+  for (const g of groups) for (const r of g.rows) if (!r.done) upcomingItems.add(r.item.id);
+  for (const r of later) if (!r.done) upcomingItems.add(r.item.id);
+
   return {
     today: { overdue, rows: todayRows, completed: completed.slice(0, MAX_COMPLETED) },
     upcoming: { groups, later: later.slice(0, MAX_LATER) },
     general,
     counts: {
       today: overdue.length + open(todayRows),
-      upcoming: groups.reduce((n, g) => n + open(g.rows), 0) + open(later),
+      upcoming: upcomingItems.size,
       general: open(general),
     },
   };
+}
+
+/** The section an item is filed under, or null (also when the section no longer exists). */
+export function categoryOf(item, categories) {
+  return (item.categoryId && categories.find((c) => c.id === item.categoryId)) || null;
 }
 
 // ---------- labels ----------
@@ -129,8 +155,23 @@ export function formatDay(dateStr, today) {
 
 export function formatWhen(item) {
   if (!item.time) return 'All day';
-  return item.endTime ? `${item.time}–${item.endTime}` : item.time;
+  if (!item.endTime) return item.time;
+  return item.endDate ? `${item.time} \u2192 ${item.endTime}` : `${item.time}\u2013${item.endTime}`;
 }
+
+/** "Wed 7 \u2013 Thu 8 Oct" for a multi-day item, the plain date for a single-day one. */
+export function formatRange(item, today) {
+  if (!item.endDate) return formatDate(item.date, today);
+  const a = parseDateStr(item.date);
+  const b = parseDateStr(item.endDate);
+  if (a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()) {
+    const year = !today || item.date.slice(0, 4) === today.slice(0, 4) ? '' : ` ${b.getFullYear()}`;
+    return `${WEEKDAYS[a.getDay()]} ${a.getDate()} \u2013 ${WEEKDAYS[b.getDay()]} ${b.getDate()} ${MONTHS[b.getMonth()]}${year}`;
+  }
+  return `${formatDate(item.date, today)} \u2013 ${formatDate(item.endDate, today)}`;
+}
+
+export const spanLabel = (span) => (span ? `Day ${span.index} of ${span.total}` : '');
 
 export function repeatLabel(rule) {
   if (!rule) return '';
