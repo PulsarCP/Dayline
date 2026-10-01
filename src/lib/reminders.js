@@ -3,11 +3,11 @@
 
 import { addDays, combine, toDateStr } from './dates.js';
 import { DEFAULT_SETTINGS, isDoneOn } from './model.js';
-import { occurrencesBetween } from './recurrence.js';
+import { occurrencesBetween, slotsOn } from './recurrence.js';
 
 /** Start moment of an occurrence. All-day items count as `allDayTime` (default 09:00). */
-export function occurrenceStart(item, date, allDayTime = DEFAULT_SETTINGS.allDayReminderTime) {
-  return combine(date, item.time ?? allDayTime);
+export function occurrenceStart(item, date, allDayTime = DEFAULT_SETTINGS.allDayReminderTime, slot = null) {
+  return combine(date, slot ?? item.time ?? allDayTime);
 }
 
 /**
@@ -27,11 +27,15 @@ export function remindersBetween(items, fromMs, toMs, { allDayTime } = {}) {
     const lastDay = addDays(toDay, Math.ceil(maxOffset / 1440));
     for (const date of occurrencesBetween(item, fromDay, lastDay)) {
       if (isDoneOn(item, date)) continue;
-      const start = occurrenceStart(item, date, allDayTime).getTime();
-      for (const { offsetMin } of item.reminders) {
-        const fireAt = start - offsetMin * 60000;
-        if (fireAt > fromMs && fireAt <= toMs) {
-          out.push({ itemId: item.id, date, reminderId: String(offsetMin), fireAt });
+      const hourly = item.recurrence?.freq === 'hourly';
+      for (const slot of hourly ? slotsOn(item, date) : [null]) {
+        const start = occurrenceStart(item, date, allDayTime, slot).getTime();
+        for (const { offsetMin } of item.reminders) {
+          const fireAt = start - offsetMin * 60000;
+          if (fireAt > fromMs && fireAt <= toMs) {
+            const reminderId = hourly ? `${offsetMin}@${slot}` : String(offsetMin);
+            out.push({ itemId: item.id, date, reminderId, fireAt });
+          }
         }
       }
     }
@@ -55,12 +59,18 @@ export function missedReminders(items, now, { lookbackMin = 720, allDayTime } = 
  * Is a missed reminder still worth showing? A timed occurrence stops mattering shortly
  * after it starts; an all-day or multi-day one matters until its last day is over.
  */
-export function isStillRelevant(item, date, now, { allDayTime, graceMin = 30 } = {}) {
+export function isStillRelevant(item, date, now, { allDayTime, graceMin = 30, slot = null } = {}) {
   if (item.time && !item.endDate) {
-    return occurrenceStart(item, date, allDayTime).getTime() + graceMin * 60000 > now.getTime();
+    return occurrenceStart(item, date, allDayTime, slot).getTime() + graceMin * 60000 > now.getTime();
   }
   const lastDay = item.endDate ?? date;
   return lastDay >= toDateStr(now);
+}
+
+/** Offset (minutes) and optional hourly slot ("HH:MM") encoded in a reminder id. */
+export function splitReminderId(reminderId) {
+  const [offset, slot = null] = String(reminderId).split('@');
+  return { offsetMin: Number(offset), slot };
 }
 
 export const alarmName = ({ itemId, date, reminderId }) => `rem|${itemId}|${date}|${reminderId}`;

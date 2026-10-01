@@ -50,6 +50,7 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
 
   const repeat = h('select', { class: 'select', id: id('repeat') },
     h('option', { value: 'none' }, 'Does not repeat'),
+    h('option', { value: 'hourly' }, 'Every few hours'),
     h('option', { value: 'daily' }, 'Daily'),
     h('option', { value: 'weekly' }, 'Weekly'),
     h('option', { value: 'monthly' }, 'Monthly'));
@@ -116,7 +117,7 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
     repeat.closest('.field').hidden = !hasDate;
     repeatBox.hidden = !hasDate || !repeating;
     repeatBox.querySelector('[data-role=weekdays]').hidden = repeat.value !== 'weekly';
-    intervalUnit.textContent = { daily: 'day(s)', weekly: 'week(s)', monthly: 'month(s)' }[repeat.value] ?? '';
+    intervalUnit.textContent = { hourly: 'hour(s)', daily: 'day(s)', weekly: 'week(s)', monthly: 'month(s)' }[repeat.value] ?? '';
     for (const r of reminderBoxes) r.box.disabled = !hasDate;
     reminderHint.hidden = hasDate;
     endDate.min = date.value || '';
@@ -170,6 +171,10 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
     showError('');
     const values = readValues();
     if (!values.title.trim()) return showError('Give it a title.');
+    if (values.recurrence?.freq === 'hourly') {
+      if (!values.time) return showError('An hourly repeat needs a start time.');
+      if (values.recurrence.interval > 23) return showError('Hours between repeats: 1 to 23 (use Daily for 24).');
+    }
     if (values.recurrence?.until && values.recurrence.until < values.date) {
       return showError('"Until" is before the start date.');
     }

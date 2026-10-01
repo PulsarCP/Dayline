@@ -176,6 +176,7 @@ export const spanLabel = (span) => (span ? `Day ${span.index} of ${span.total}` 
 export function repeatLabel(rule) {
   if (!rule) return '';
   const n = rule.interval;
+  if (rule.freq === 'hourly') return n === 1 ? 'Every hour' : `Every ${n} hours`;
   if (rule.freq === 'daily') return n === 1 ? 'Daily' : `Every ${n} days`;
   if (rule.freq === 'monthly') return n === 1 ? 'Monthly' : `Every ${n} months`;
   const days = rule.weekdays ?? [];

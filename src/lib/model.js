@@ -69,6 +69,9 @@ export function normalizeItem(raw, now = Date.now()) {
   if (date === null) time = null;
 
   const recurrence = date === null ? null : normalizeRecurrence(raw.recurrence);
+  if (recurrence?.freq === 'hourly' && time === null) {
+    throw new RangeError('an hourly repeat needs a start time');
+  }
 
   let endDate = raw.endDate ?? null;
   if (endDate !== null) {

@@ -27,7 +27,7 @@ const EMPTY = {
 const normTag = (s) => s.toLowerCase().replace(/[\s_-]+/g, '');
 
 export function mountPopup(doc, store, {
-  now = () => new Date(), animationMs = 450, openOptions = () => {},
+  now = () => new Date(), animationMs = 450, openOptions = () => {}, openCalendar = () => {},
 } = {}) {
   const win = doc.defaultView;
   const h = createH(doc);
@@ -37,6 +37,7 @@ export function mountPopup(doc, store, {
     main: $('main-view'),
     dateLabel: $('date-label'),
     options: $('open-options'),
+    calendar: $('open-calendar'),
     form: $('add-form'),
     input: $('add-input'),
     addBtn: $('add-btn'),
@@ -106,7 +107,7 @@ export function mountPopup(doc, store, {
     state.items = s.items;
     state.categories = s.categories;
     state.settings = s.settings;
-    if (state.filter !== 'all' && state.filter !== 'none'
+    if (state.filter !== 'all'
       && !state.categories.some((c) => c.id === state.filter)) {
       state.filter = 'all';
     }
@@ -161,7 +162,6 @@ export function mountPopup(doc, store, {
     el.filters.replaceChildren(
       chip('all', 'All'),
       ...cats.map((c) => chip(c.id, c.name, c.color)),
-      chip('none', 'No section'),
     );
   }
 
@@ -180,7 +180,7 @@ export function mountPopup(doc, store, {
       h('option', { value: '' }, 'No section'),
       ...state.categories.map((c) => h('option', { value: c.id }, c.name)),
     );
-    const preferred = state.filter !== 'all' && state.filter !== 'none' ? state.filter : cur;
+    const preferred = state.filter !== 'all' ? state.filter : cur;
     el.category.value = state.categories.some((c) => c.id === preferred) ? preferred : '';
     el.category.hidden = state.categories.length === 0;
   }
@@ -429,6 +429,8 @@ export function mountPopup(doc, store, {
     el.reminder.append(h('option', { value: String(c.value ?? 'none') }, c.label));
   }
   el.addBtn.append(icon('plus'));
+  el.calendar.append(icon('calendar'));
+  el.calendar.addEventListener('click', () => openCalendar());
   el.options.append(icon('sliders'));
   el.editBack.append(icon('back'));
 

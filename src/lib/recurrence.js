@@ -1,16 +1,18 @@
 // Recurrence rules and occurrence expansion.
 //
-// Rule shape: { freq: 'daily'|'weekly'|'monthly', interval: n,
+// Rule shape: { freq: 'hourly'|'daily'|'weekly'|'monthly', interval: n,
 //               weekdays?: [0..6] (weekly only, 0 = Sunday), until?: 'YYYY-MM-DD' }
-// The series starts on the item's own `date`.
+// The series starts on the item's own `date`. An hourly rule repeats every `interval`
+// hours (1..23) counted continuously from the item's start time; the occurrence is
+// the day, and `slotsOn` lists the clock times inside it.
 
 import {
   addDays, daysInMonth, diffDays, isValidDateStr, parseDateStr, toDateStr, weekdayOf,
 } from './dates.js';
 
-export const FREQS = ['daily', 'weekly', 'monthly'];
+export const FREQS = ['hourly', 'daily', 'weekly', 'monthly'];
 export const MAX_SPAN_DAYS = 800; // hard cap on any expansion window
-const MAX_INTERVAL = { daily: 365, weekly: 52, monthly: 24 };
+const MAX_INTERVAL = { hourly: 23, daily: 365, weekly: 52, monthly: 24 };
 
 /** Validates and cleans a rule. Returns null for "no recurrence"; throws on invalid input. */
 export function normalizeRecurrence(r) {
@@ -55,7 +57,9 @@ export function occurrencesBetween(item, from, to) {
   if (first > last) return [];
 
   const out = [];
-  if (r.freq === 'daily') {
+  if (r.freq === 'hourly') {
+    for (let d = first; d <= last; d = addDays(d, 1)) out.push(d);
+  } else if (r.freq === 'daily') {
     const k = Math.ceil(diffDays(start, first) / r.interval);
     for (let d = addDays(start, k * r.interval); d <= last; d = addDays(d, r.interval)) out.push(d);
   } else if (r.freq === 'weekly') {
@@ -78,6 +82,27 @@ export function occurrencesBetween(item, from, to) {
       if (d > last) break;
       if (d >= first) out.push(d);
     }
+  }
+  return out;
+}
+
+/**
+ * Clock times ("HH:MM") at which an hourly item fires on `date`, counted continuously
+ * from its first start (date + time) in steps of `interval` hours. Non-hourly items
+ * have a single slot (their own time, or null for all-day).
+ */
+export function slotsOn(item, date) {
+  const r = item.recurrence;
+  if (r?.freq !== 'hourly' || !item.time) return [item.time ?? null];
+  const [h, m] = item.time.split(':').map(Number);
+  const step = r.interval * 60;
+  const dayStart = diffDays(item.date, date) * 1440 - (h * 60 + m); // minutes since first slot
+  const out = [];
+  for (let k = Math.max(0, Math.ceil(dayStart / step)); ; k++) {
+    const t = k * step - dayStart;
+    if (t >= 1440) break;
+    const mins = t;
+    out.push(`${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`);
   }
   return out;
 }

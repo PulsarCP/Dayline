@@ -1,8 +1,8 @@
 # CURRENT_STATE
 
-Handoff for the next chat. Updated at the end of **Phase 3** (reminders, notifications, badge) together with multi-day events, sections, item editing and the options page.
+Handoff for the next chat. Updated at the end of **Phase 4** (calendar page, All list with search/filters) together with multi-weekday and hourly repeats.
 
-Repo: https://github.com/PulsarCP/Dayline (branch `main`). Plain JavaScript ES modules, Manifest V3 (v0.3.0), no build step, no runtime dependencies. Tests: `npm test` (Node built-in runner, ~140 tests). End-to-end: `python3 tests/e2e/e2e.py` (Playwright + Chromium).
+Repo: https://github.com/PulsarCP/Dayline (branch `main`). Plain JavaScript ES modules, Manifest V3 (v0.4.0), no build step, no runtime dependencies. Tests: `npm test` (Node built-in runner, ~140 tests). End-to-end: `python3 tests/e2e/e2e.py` (Playwright + Chromium).
 
 ## Decisions so far
 
@@ -22,7 +22,7 @@ Repo: https://github.com/PulsarCP/Dayline (branch `main`). Plain JavaScript ES m
 `pad`, `toDateStr(Date)`, `parseDateStr(str) -> Date|null`, `isValidDateStr`, `isValidTimeStr`, `timeToMinutes`, `timeStrOf(Date)`, `addDays`, `addMonths` (clamps), `daysInMonth`, `diffDays(a, b)`, `weekdayOf` (0 = Sunday), `combine(dateStr, timeStr) -> Date`.
 
 ### `src/lib/recurrence.js`
-Rule: `{freq: 'daily'|'weekly'|'monthly', interval, weekdays?, until?}`. `normalizeRecurrence`, `occurrencesBetween(item, from, to)` (window capped at 800 days; a one-off item yields only its own `date`), `nextOccurrence`.
+Rule: `{freq: 'hourly'|'daily'|'weekly'|'monthly', interval, weekdays?, until?}`. Hourly: interval 1..23, needs a start time (model throws otherwise); the occurrence is the day, `slotsOn(item, date)` lists the clock times (continuous from the first start, so they shift per day when 24 is not a multiple). Reminder ids for hourly are `offset@HH:MM` (`splitReminderId`); done/snooze are per day. `normalizeRecurrence`, `occurrencesBetween(item, from, to)` (window capped at 800 days; a one-off item yields only its own `date`), `nextOccurrence`.
 
 ### `src/lib/model.js`
 `normalizeItem(raw, now?)` (throws on invalid; builds a fresh object from known fields), `normalizeCategory`, `normalizeSettings`, `isDoneOn(item, date)`, `lastDayOf(item)`, `LIMITS`, `TYPES`, `COLORS`, `SNOOZE_CHOICES`, `DEFAULT_SETTINGS`.
@@ -55,6 +55,10 @@ Registers listeners synchronously and delegates to the scheduler. Storage change
 - `src/popup/` (`app.js` has `mountPopup(document, store, {now, openOptions})`): quick-add with live preview chips, section select, Today / Upcoming / General tabs, section filter chips (shown once sections exist), edit view (click a row or the pencil), two-step delete. Tab, filter and "show completed" are remembered in `localStorage` (convenience only).
 - `src/options/` (`app.js` has `mountOptions(document, store, {version, download, confirmReplace, now})`): sections (add, rename, recolour, delete), default reminder, all-day reminder time, snooze length, export/import. Opened as a full tab (`options_ui.open_in_tab`) because file pickers can close an extension popup.
 
+### `src/lib/calendar.js` and `src/app/`
+`monthGrid(year, month0, weekStart)`, `dayRows(items, from, to, now)` (Map date -> rows), `selectDay(state, date, {ctrl, shift})`, `selectionTarget(selected)` (first day; last day only for an unbroken run), `filterAll(items, {query, status, category, when, from, to}, now)`, `monthTitle`. `src/app/mount.js` has `mountCalendar(document, store, {now, openOptions})`; page `src/app/app.html` (opened with `chrome.tabs.create` from the popup's calendar button; no extra permission). The panel quick-add uses typed dates, otherwise the selected day(s). The All list shows a repeating series once (no tick box).
+Popup: the "No section" filter chip was removed (the add/edit select still has "No section").
+
 ## Lessons learned (keep)
 
 - **Notification `iconUrl` must be a full extension URL** (`chrome.runtime.getURL(...)`). A relative path resolves against the calling script (`src/...`) and Chrome rejects the whole notification. The unit tests with a fake could not catch this; the e2e run did.
@@ -64,7 +68,7 @@ Registers listeners synchronously and delegates to the scheduler. Storage change
 
 ## Testing status
 
-- 140 unit tests (139 pass, 1 skipped: `navigator.locks` path, Node 22 lacks it) pass under `TZ=Europe/Rome`, `America/New_York`, `Pacific/Auckland`, `UTC`.
+- 150 unit tests (149 pass, 1 skipped: `navigator.locks` path, Node 22 lacks it) pass under `TZ=Europe/Rome`, `America/New_York`, `Pacific/Auckland`, `UTC`.
 - `tests/e2e/e2e.py` (headless Chromium 141, extension loaded unpacked): all checks pass. Covers quick-add ranges and `#tags`, sections and filters, edit form, options page (sections, settings, export, merge/replace import, corrupt file), real worker: alarm created after adding an item, notification shown, Snooze, snoozed reminder returning, Mark done clearing alarms and badge, startup catch-up, no console errors.
 
 Not verified (needs Daniel's real Chrome): how the OS actually displays notifications (Windows/macOS/Linux settings, Focus modes), `requireInteraction` behaviour per OS, popup size and focus in headed Chrome, behaviour after a real browser restart (alarm persistence is handled by re-deriving on startup, but only simulated), and the `navigator.locks` write path.
@@ -76,9 +80,10 @@ Not verified (needs Daniel's real Chrome): how the OS actually displays notifica
 - A multi-day item appears once per day in Upcoming (7 days max), counted once.
 - Recurring items: missed past occurrences are not flagged overdue and not counted in the badge (by design).
 - Editing a repeating item edits the whole series.
-- There is no month calendar yet (phase 4), and no search.
+- Hourly repeats: Mark done / Snooze apply to the whole day's series, not one slot; the calendar shows the series once per day.
+- Calendar page: multi-day items are chips on each day (no continuous bars); Monday-first weeks.
 - Rendering rule: every user-supplied string goes through `textContent`/text nodes, never `innerHTML` (an `<img onerror>` title is verified inert).
 
-## Next: Phase 4
+## Next
 
-Full-page app (open in a tab): month calendar with multi-day bars, an "All" list including undated items, search and filters (status, date range, section), reuse `createItemForm` and `buildViews`/`occurrencesBetween`. Then remind Daniel of the v2 list above.
+Remind Daniel of the v2 list above (priority levels, subtasks, `chrome.storage.sync`, keyboard shortcuts, right-click "Add to schedule", `.ics` export, daily agenda notification, undo). Possible polish: continuous multi-day bars, drag to move, per-slot completion for hourly items.

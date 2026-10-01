@@ -91,7 +91,7 @@ test('nextOccurrence', () => {
 test('normalizeRecurrence validates', () => {
   assert.equal(normalizeRecurrence(null), null);
   assert.deepEqual(normalizeRecurrence({ freq: 'weekly', weekdays: [3, 1, 3] }), { freq: 'weekly', interval: 1, weekdays: [1, 3] });
-  assert.throws(() => normalizeRecurrence({ freq: 'hourly' }));
+  assert.throws(() => normalizeRecurrence({ freq: 'yearly' }));
   assert.throws(() => normalizeRecurrence({ freq: 'daily', interval: 0 }));
   assert.throws(() => normalizeRecurrence({ freq: 'daily', interval: 1.5 }));
   assert.throws(() => normalizeRecurrence({ freq: 'weekly', weekdays: [7] }));

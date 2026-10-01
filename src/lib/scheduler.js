@@ -16,7 +16,7 @@ import { DEFAULT_SETTINGS, isDoneOn } from './model.js';
 import { occurrencesBetween } from './recurrence.js';
 import {
   alarmName, badgeCount, isOverdue, isStillRelevant, missedReminders, parseAlarmName,
-  upcomingReminders,
+  splitReminderId, upcomingReminders,
 } from './reminders.js';
 import {
   categoryOf, formatDay, formatRange, formatWhen, offsetLabel,
@@ -152,16 +152,22 @@ export function createScheduler({ api, store, backend, now = () => new Date() })
 
   // ---------- notifications ----------
 
+  // An hourly item shows the clock time of the slot that fired, not its first start.
+  const slotItem = (item, parts) => {
+    const { slot } = splitReminderId(parts.reminderId ?? '');
+    return slot ? { ...item, time: slot, endTime: null } : item;
+  };
+
   async function show(kind, parts, item, categories, settings) {
     const t = now();
     const today = toDateStr(t);
     const cat = categoryOf(item, categories);
     const when = item.endDate
       ? `${formatRange(item, today)}${item.time ? ` · from ${item.time}` : ''}`
-      : `${formatDay(parts.date, today)} · ${formatWhen(item)}`;
+      : `${formatDay(parts.date, today)} · ${formatWhen(slotItem(item, parts))}`;
     const context = kind === 'snz'
       ? 'Snoozed reminder'
-      : `Reminder · ${offsetLabel(Number(parts.reminderId))}`;
+      : `Reminder · ${offsetLabel(splitReminderId(parts.reminderId).offsetMin)}`;
     const id = kind === 'snz' ? snoozeName(parts.itemId, parts.date) : alarmName(parts);
     await api.notifications.create(id, {
       type: 'basic',
@@ -179,7 +185,7 @@ export function createScheduler({ api, store, backend, now = () => new Date() })
   function validate(state, parts, kind) {
     const item = state.items.find((it) => it.id === parts.itemId);
     if (!item || !occurrenceExists(item, parts.date) || isDoneOn(item, parts.date)) return null;
-    if (kind === 'rem' && !item.reminders.some((r) => String(r.offsetMin) === parts.reminderId)) {
+    if (kind === 'rem' && !item.reminders.some((r) => r.offsetMin === splitReminderId(parts.reminderId).offsetMin)) {
       return null;
     }
     return item;
@@ -228,7 +234,9 @@ export function createScheduler({ api, store, backend, now = () => new Date() })
     }).filter((r) => {
       const item = byId.get(r.itemId);
       return !fired[firedKey(r)]
-        && isStillRelevant(item, r.date, t, { allDayTime: settings.allDayReminderTime });
+        && isStillRelevant(item, r.date, t, {
+          allDayTime: settings.allDayReminderTime, slot: splitReminderId(r.reminderId).slot,
+        });
     });
 
     // Record everything as handled so nothing is re-announced on the next start.

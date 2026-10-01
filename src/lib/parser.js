@@ -114,14 +114,29 @@ export function parseQuickAdd(input, now = new Date()) {
     freq: 'weekly', interval: 1, weekdays: [1, 2, 3, 4, 5],
   }));
   if (!r) {
-    r = consume(text, new RegExp(`\\bevery\\s+(?:(other|on)\\s+)?${WD_RE}s?\\b`, 'i'), (m) => {
-      const { idx } = lookupWeekday(m[2]);
-      if (idx === undefined) return undefined;
+    // "every thursday", "every other friday", "every thursday and friday", "every mon, wed & fri"
+    const WD_ONE = WD_RE.replace(/^\(/, '(?:');
+    const list = `${WD_ONE}s?(?:\\s*(?:,|&|\\+|\\band\\b)\\s*(?:and\\s+)?${WD_ONE}s?)*`;
+    r = consume(text, new RegExp(`\\bevery\\s+(?:(other|on)\\s+)?(${list})\\b`, 'i'), (m) => {
+      const days = [];
+      for (const w of m[2].matchAll(new RegExp(`\\b${WD_RE}`, 'gi'))) {
+        const { idx } = lookupWeekday(w[1]);
+        if (idx === undefined) return undefined;
+        days.push(idx);
+      }
+      if (!days.length) return undefined;
       return safeRecurrence({
-        freq: 'weekly', interval: m[1]?.toLowerCase() === 'other' ? 2 : 1, weekdays: [idx],
+        freq: 'weekly', interval: m[1]?.toLowerCase() === 'other' ? 2 : 1, weekdays: days,
       });
     });
   }
+  if (!r) {
+    r = consume(text, /\bevery\s+(?:(\d{1,2}|other)\s+)?hours?\b/i, (m) => {
+      const n = m[1] ? (m[1].toLowerCase() === 'other' ? 2 : Number(m[1])) : 1;
+      return safeRecurrence({ freq: 'hourly', interval: n });
+    });
+  }
+  if (!r) r = consume(text, /\bhourly\b/i, () => ({ freq: 'hourly', interval: 1 }));
   if (!r) {
     r = consume(text, /\bevery\s+(?:(\d{1,3}|other)\s+)?(day|week|month)s?\b/i, (m) => {
       const n = m[1] ? (m[1].toLowerCase() === 'other' ? 2 : Number(m[1])) : 1;
@@ -275,6 +290,12 @@ export function parseQuickAdd(input, now = new Date()) {
       const d = addDays(today, i);
       if (recurrence.weekdays.includes(weekdayOf(d))) date = d;
     }
+  }
+  if (recurrence?.freq === 'hourly' && !time) {
+    // No start given: begin at the next 5-minute mark, so "every 2 hours" starts right away.
+    const start = new Date(Math.ceil((now.getTime() + 1) / 300000) * 300000);
+    if (!date) date = toDateStr(start);
+    time = date === toDateStr(start) ? timeStrOf(start) : '09:00';
   }
   if (!date && (time || recurrence)) {
     date = time && combine(today, time) <= now ? addDays(today, 1) : today;
