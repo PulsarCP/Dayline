@@ -81,3 +81,6 @@ body { min-height: 100vh; }
 .all-count { font-size: 12.5px; color: var(--muted); margin: 0 2px 8px; }
 .all-edit { padding: 14px; max-width: 520px; margin: 0 auto; }
 .grow { flex: 1; }
+
+.btn.toggle-btn[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.month-nav { flex-wrap: wrap; justify-content: flex-end; }

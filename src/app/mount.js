@@ -6,6 +6,7 @@ import {
   filterAll, dayRows, monthGrid, monthTitle, selectDay, selectionTarget,
 } from '../lib/calendar.js';
 import { addDays, diffDays, parseDateStr, toDateStr } from '../lib/dates.js';
+import { slotsOn } from '../lib/recurrence.js';
 import { COLORS } from '../lib/model.js';
 import { parseQuickAdd } from '../lib/parser.js';
 import {
@@ -26,7 +27,7 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
   const el = {
     views: $('views'), calView: $('calendar-view'), allView: $('all-view'),
     title: $('month-title'), grid: $('grid'), dow: $('dow'), panel: $('panel'),
-    prev: $('prev'), next: $('next'), today: $('today-btn'),
+    prev: $('prev'), next: $('next'), today: $('today-btn'), multi: $('multi-btn'),
     filters: $('all-filters'), list: $('all-list'), options: $('open-options'),
   };
 
@@ -35,6 +36,7 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
     view: 'calendar',
     year: t0.getFullYear(),
     month: t0.getMonth(),
+    multi: false, // "Select several days" mode: every click adds or removes a day
     selected: [toDateStr(t0)],
     anchor: toDateStr(t0),
     items: [], categories: [], settings: {},
@@ -97,7 +99,7 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
     const sel = new Set(state.selected);
 
     el.grid.replaceChildren(...flat.map((date) => {
-      const list = rows.get(date) ?? [];
+      const list = (rows.get(date) ?? []).filter((r) => r.item.showOnCalendar !== false);
       const day = parseDateStr(date);
       const inMonth = day.getMonth() === state.month;
       const open = list.filter((r) => !r.done).length;
@@ -126,14 +128,14 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
   }
 
   function onDayClick(date, ev) {
-    const next = selectDay(state, date, { ctrl: ev.ctrlKey || ev.metaKey, shift: ev.shiftKey });
+    const next = selectDay(state, date, { ctrl: ev.ctrlKey || ev.metaKey || state.multi, shift: ev.shiftKey });
     state.selected = next.selected;
     state.anchor = next.anchor;
     state.editing = null;
     state.error = '';
     // Clicking a greyed-out day of a neighbouring month jumps to that month.
     const d = parseDateStr(date);
-    if (d.getMonth() !== state.month && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey) showMonth(d.getFullYear(), d.getMonth());
+    if (d.getMonth() !== state.month && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !state.multi) showMonth(d.getFullYear(), d.getMonth());
     renderGrid();
     renderPanel();
     el.grid.querySelector(`[data-date="${date}"]`)?.focus();
@@ -149,6 +151,10 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
   }
 
   const shiftMonth = (n) => { showMonth(state.year, state.month + n); renderGrid(); };
+  el.multi.addEventListener('click', () => {
+    state.multi = !state.multi;
+    el.multi.setAttribute('aria-pressed', String(state.multi));
+  });
   el.prev.addEventListener('click', () => shiftMonth(-1));
   el.next.addEventListener('click', () => shiftMonth(1));
   el.today.addEventListener('click', () => {
@@ -338,14 +344,22 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
     if (row.overdue) meta.push(h('span', { class: 'late' }, 'Overdue'));
     if (showDate && item.date) meta.push(h('span', {}, formatRange(item, today)));
     if (row.span) meta.push(h('span', { class: 'span' }, spanLabel(row.span)));
-    if (item.date && !item.endDate) meta.push(h('span', {}, icon('clock'), formatWhen(item)));
+    if (item.date && !item.endDate && item.recurrence?.freq !== 'hourly') meta.push(h('span', {}, icon('clock'), formatWhen(item)));
     else if (item.date && row.span?.index === 1 && item.time) meta.push(h('span', {}, icon('clock'), formatWhen(item)));
     if (item.recurrence) meta.push(h('span', {}, icon('repeat'), repeatLabel(item.recurrence)));
+    if (!showDate && item.recurrence?.freq === 'hourly' && row.date) {
+      const slots = slotsOn(item, row.date);
+      meta.push(h('span', {}, icon('clock'), slots.length > 6 ? `${slots.slice(0, 6).join(', ')} …` : slots.join(', ')));
+    }
+    if (item.showOnCalendar === false) meta.push(h('span', { title: 'Hidden from the calendar grid' }, icon('eyeoff'), 'Hidden on grid'));
     if (item.date && item.reminders.length && !row.done) meta.push(h('span', {}, icon('bell'), remindersSummary(item)));
     const cat = categoryOf(item, state.categories);
     if (cat) meta.push(h('span', { class: 'sect', dataset: { color: cat.color } }, h('i', { class: 'dot' }), cat.name));
 
-    const canCheck = !(showDate && item.recurrence); // the All list shows a series once: no per-day checkbox
+    // No tick box: for notes, for a series shown once in the All list, and for hourly items
+    // (tick those one reminder at a time in the toolbar popup).
+    const canCheck = item.checkable !== false && !(showDate && item.recurrence)
+      && item.recurrence?.freq !== 'hourly';
     const check = canCheck ? h('input', {
       type: 'checkbox', class: 'check', 'aria-label': `${row.done ? 'Mark not done' : 'Mark done'}: ${item.title}`,
     }) : h('span', { class: 'check-spacer' });
@@ -422,7 +436,7 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
   }
 
   function isLate(item) {
-    if (!item.date || item.recurrence || item.done) return false;
+    if (!item.date || item.recurrence || item.done || item.checkable === false) return false;
     const last = item.endDate ?? item.date;
     const t = now();
     const today = toDateStr(t);

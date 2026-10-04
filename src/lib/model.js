@@ -3,7 +3,7 @@
 // fresh object from known fields only, so unknown or hostile keys never persist.
 
 import { diffDays, isValidDateStr, isValidTimeStr, timeToMinutes } from './dates.js';
-import { normalizeRecurrence } from './recurrence.js';
+import { normalizeRecurrence, slotsOn } from './recurrence.js';
 
 export const LIMITS = Object.freeze({
   title: 200,
@@ -96,12 +96,20 @@ export function normalizeItem(raw, now = Date.now()) {
     throw new TypeError('invalid categoryId');
   }
 
-  const done = raw.done === true;
+  // false = a note/habit with no done checkbox; it is never overdue and not counted as "to do".
+  const checkable = raw.checkable !== false;
+  // false = keep it off the calendar grid (it is still listed when you select its day).
+  const showOnCalendar = raw.showOnCalendar !== false;
+
+  const done = checkable && raw.done === true;
   const doneAt = done ? (Number.isFinite(raw.doneAt) ? raw.doneAt : now) : null;
 
+  const validKey = (k) => typeof k === 'string'
+    && (isValidDateStr(k) || (recurrence?.freq === 'hourly' && /^\d{4}-\d{2}-\d{2}@\d{2}:\d{2}$/.test(k)
+      && isValidDateStr(k.slice(0, 10)) && isValidTimeStr(k.slice(11))));
   let completedDates = [];
-  if (recurrence && Array.isArray(raw.completedDates)) {
-    completedDates = [...new Set(raw.completedDates.filter(isValidDateStr))]
+  if (recurrence && checkable && Array.isArray(raw.completedDates)) {
+    completedDates = [...new Set(raw.completedDates.filter(validKey))]
       .sort()
       .slice(-LIMITS.completedDates);
   }
@@ -131,6 +139,8 @@ export function normalizeItem(raw, now = Date.now()) {
     time,
     endTime,
     recurrence,
+    checkable,
+    showOnCalendar,
     categoryId,
     reminders,
     done,
@@ -145,8 +155,15 @@ export function normalizeItem(raw, now = Date.now()) {
 export const lastDayOf = (item) => item.endDate ?? item.date;
 
 /** Is this item (or this occurrence of a recurring item) completed? */
-export function isDoneOn(item, date) {
-  return item.recurrence ? item.completedDates.includes(date) : item.done;
+export function isDoneOn(item, date, slot = null) {
+  if (item.checkable === false) return false;
+  if (!item.recurrence) return item.done;
+  if (item.recurrence.freq === 'hourly') {
+    if (slot) return item.completedDates.includes(`${date}@${slot}`);
+    const slots = slotsOn(item, date);
+    return slots.length > 0 && slots.every((s) => item.completedDates.includes(`${date}@${s}`));
+  }
+  return item.completedDates.includes(date);
 }
 
 /** Section: { id, name, color }. Throws on anything invalid. */

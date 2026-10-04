@@ -3,7 +3,7 @@
 
 import { addDays, combine, toDateStr } from './dates.js';
 import { DEFAULT_SETTINGS, isDoneOn } from './model.js';
-import { occurrencesBetween, slotsOn } from './recurrence.js';
+import { hourlyState, occurrencesBetween, slotsOn } from './recurrence.js';
 
 /** Start moment of an occurrence. All-day items count as `allDayTime` (default 09:00). */
 export function occurrenceStart(item, date, allDayTime = DEFAULT_SETTINGS.allDayReminderTime, slot = null) {
@@ -29,6 +29,7 @@ export function remindersBetween(items, fromMs, toMs, { allDayTime } = {}) {
       if (isDoneOn(item, date)) continue;
       const hourly = item.recurrence?.freq === 'hourly';
       for (const slot of hourly ? slotsOn(item, date) : [null]) {
+        if (hourly && item.completedDates.includes(`${date}@${slot}`)) continue;
         const start = occurrenceStart(item, date, allDayTime, slot).getTime();
         for (const { offsetMin } of item.reminders) {
           const fireAt = start - offsetMin * 60000;
@@ -86,7 +87,7 @@ export function parseAlarmName(name) {
  * A multi-day item is due at the end of its last day, not at its start.
  */
 export function isOverdue(item, now, allDayTime) {
-  if (!item.date || item.recurrence || item.done) return false;
+  if (!item.date || item.recurrence || item.done || item.checkable === false) return false;
   const today = toDateStr(now);
   if (item.endDate) {
     if (item.endDate < today) return true;
@@ -109,8 +110,11 @@ export function badgeCount(items, now) {
   const today = toDateStr(now);
   let n = 0;
   for (const item of items) {
-    if (!item.date) continue;
-    if (item.recurrence) {
+    if (!item.date || item.checkable === false) continue;
+    if (item.recurrence?.freq === 'hourly') {
+      const st = hourlyState(item, now);
+      if (st && !st.done) n++;
+    } else if (item.recurrence) {
       if (occurrencesBetween(item, today, today).length && !isDoneOn(item, today)) n++;
     } else if (!item.done && item.date <= today) {
       n++;

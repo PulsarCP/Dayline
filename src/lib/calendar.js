@@ -93,7 +93,10 @@ export const WHEN_FILTERS = ['any', 'overdue', 'today', 'week', 'dated', 'undate
 const normalize = (s) => String(s ?? '').toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '');
 
 /** Done for the "All" list: a repeating item is never "done" as a whole. */
-const itemDone = (item) => (item.recurrence ? false : item.done);
+const itemDone = (item, today) => {
+  if (item.checkable === false) return Boolean(item.date) && (item.endDate ?? item.date) < today; // notes: past = finished
+  return item.recurrence ? false : item.done;
+};
 
 /**
  * The "All" list: search + filters, sorted dated-first (soonest first), then undated.
@@ -107,8 +110,8 @@ export function filterAll(items, f = {}, now = new Date()) {
   const weekEnd = addDays(today, 6);
   const words = normalize(query).split(/\s+/).filter(Boolean);
   const out = items.filter((item) => {
-    if (status === 'open' && itemDone(item)) return false;
-    if (status === 'done' && !itemDone(item)) return false;
+    if (status === 'open' && itemDone(item, today)) return false;
+    if (status === 'done' && !itemDone(item, today)) return false;
     if (category === 'none' ? item.categoryId : category !== 'all' && item.categoryId !== category) return false;
     if (words.length) {
       const hay = normalize(`${item.title} ${item.notes}`);

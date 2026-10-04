@@ -56,7 +56,7 @@ export function mountPopup(doc, store, {
   };
 
   const state = {
-    tab: readPref('tab', 'today'),
+    tab: 'today', // always open on Today
     filter: readPref('filter', 'all'), // 'all' | 'none' | section id
     showDone: readPref('showDone', '0') === '1',
     items: [],
@@ -249,8 +249,14 @@ export function mountPopup(doc, store, {
       else nodes.push(emptyEl('general'));
     }
     el.list.replaceChildren(...nodes);
+    updateFade();
   }
 
+  // The list has no visible scrollbar; a soft fade at the bottom hints that there is more.
+  function updateFade() {
+    const more = el.list.scrollHeight - el.list.clientHeight - el.list.scrollTop > 4;
+    el.list.classList.toggle('more-below', more);
+  }
   function emptyEl(tab) {
     const [head, sub] = EMPTY[tab];
     return h('div', { class: 'empty' }, h('strong', {}, head), h('span', {}, sub));
@@ -269,8 +275,9 @@ export function mountPopup(doc, store, {
       meta.push(h('span', { class: 'span' }, spanLabel(row.span)));
       meta.push(h('span', {}, `${formatRange(item, today)}${item.time && row.span.index === 1 ? ` · ${formatWhen(item)}` : ''}`));
     } else if (row.date) {
-      meta.push(h('span', {}, formatWhen(item)));
+      meta.push(h('span', {}, formatWhen(row.slot ? { ...item, time: row.slot, endTime: null } : item)));
     }
+    if (row.slot && row.next) meta.push(h('span', { class: 'next' }, `Next ${row.next}`));
     if (item.recurrence) meta.push(h('span', {}, icon('repeat'), repeatLabel(item.recurrence)));
     if (!row.done && item.date && item.reminders.length) {
       meta.push(h('span', {}, icon('bell'), remindersSummary(item)));
@@ -278,12 +285,19 @@ export function mountPopup(doc, store, {
     const cat = state.filter === 'all' ? categoryOf(item, state.categories) : null;
     if (cat) meta.push(h('span', { class: 'sect' }, h('i', { class: 'dot', dataset: { color: cat.color } }), cat.name));
 
-    const check = h('input', {
-      type: 'checkbox',
-      class: 'check',
-      'aria-label': `${row.done ? 'Mark not done' : 'Mark done'}: ${item.title}`,
-    });
-    check.checked = row.done;
+    const check = item.checkable === false
+      ? h('span', { class: 'check-spacer', title: 'No done checkbox for this item' })
+      : h('input', {
+        type: 'checkbox',
+        class: 'check',
+        'aria-label': `${row.done ? 'Mark not done' : 'Mark done'}: ${item.title}`,
+      });
+    if (check.type === 'checkbox') check.checked = row.done;
+    const restart = row.slot && item.checkable !== false ? h('button', {
+      type: 'button', class: 'iconbtn restart', dataset: { restart: item.id },
+      'aria-label': `Done now, next one in ${item.recurrence.interval} h: ${item.title}`,
+      title: `Done now: restart the ${item.recurrence.interval}-hour cycle from this moment`,
+    }, icon('rotate')) : null;
 
     const edit = h('button', {
       type: 'button', class: 'iconbtn edit', 'aria-label': `Edit ${item.title}`, title: 'Edit',
@@ -294,11 +308,11 @@ export function mountPopup(doc, store, {
 
     return h('li', {
       class: ['row', row.done && 'done', row.overdue && 'overdue', item.id === state.flashId && 'new'].filter(Boolean).join(' '),
-      dataset: { id: item.id, date: row.date ?? '' },
+      dataset: { id: item.id, date: row.slot ? `${row.date}@${row.slot}` : (row.date ?? '') },
     },
     check,
     h('div', { class: 'body' }, h('div', { class: 'title' }, item.title), meta.length > 0 && h('div', { class: 'meta' }, meta)),
-    h('div', { class: 'acts' }, edit, del));
+    h('div', { class: 'acts' }, restart, edit, del));
   }
 
   // ---------- adding ----------
@@ -341,7 +355,6 @@ export function mountPopup(doc, store, {
       state.error = null;
       state.flashId = item.id;
       state.tab = !item.date ? 'general' : item.date <= todayStr() ? 'today' : 'upcoming';
-      writePref('tab', state.tab);
       // Keep the new item visible: a filter for another section would hide it.
       if (state.filter !== 'all' && state.filter !== (item.categoryId ?? 'none')) {
         state.filter = 'all';
@@ -436,7 +449,6 @@ export function mountPopup(doc, store, {
 
   const selectTab = (id) => {
     state.tab = id;
-    writePref('tab', id);
     render();
   };
 
@@ -480,10 +492,16 @@ export function mountPopup(doc, store, {
     if (ev.key === 'Escape' && !el.editView.hidden) closeEdit();
   });
 
+  el.list.addEventListener('scroll', updateFade, { passive: true });
   el.list.addEventListener('change', (ev) => {
     if (ev.target.matches('input.check')) onToggle(ev.target);
   });
-  el.list.addEventListener('click', (ev) => {
+  el.list.addEventListener('click', async (ev) => {
+    const rs = ev.target.closest('button.restart');
+    if (rs) {
+      try { await store.restartHourly(rs.dataset.restart); } catch (e) { showError(e.message || 'Could not restart'); }
+      return refresh();
+    }
     const del = ev.target.closest('button.del');
     if (del) return onDelete(del);
     const li = ev.target.closest('li.row');

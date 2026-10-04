@@ -5,7 +5,7 @@
 // when available because it also covers the popup, options tab and service worker,
 // which are separate JS contexts; otherwise an in-process promise queue is used.
 
-import { addDays, diffDays, isValidDateStr } from './dates.js';
+import { addDays, diffDays, isValidDateStr, timeStrOf, toDateStr } from './dates.js';
 import {
   DEFAULT_SETTINGS, LIMITS, normalizeCategory, normalizeItem, normalizeSettings,
 } from './model.js';
@@ -17,6 +17,7 @@ export const MAX_IMPORT_CHARS = 5_000_000;
 
 const PATCHABLE = [
   'title', 'notes', 'type', 'date', 'endDate', 'time', 'endTime', 'recurrence', 'categoryId', 'reminders',
+  'checkable', 'showOnCalendar',
 ];
 
 export function createChromeBackend(area = globalThis.chrome?.storage?.local) {
@@ -170,15 +171,41 @@ export function createStore(backend, opts = {}) {
         const item = { ...state.items[i] };
         const t = now();
         if (item.recurrence) {
-          if (!isValidDateStr(occurrenceDate)) throw new TypeError('occurrenceDate required');
+          const key = String(occurrenceDate ?? '');
+          const okKey = isValidDateStr(key)
+            || (item.recurrence.freq === 'hourly' && /^\d{4}-\d{2}-\d{2}@\d{2}:\d{2}$/.test(key));
+          if (!okKey) throw new TypeError('occurrenceDate required');
           const set = new Set(item.completedDates);
-          if (done) set.add(occurrenceDate);
-          else set.delete(occurrenceDate);
+          if (done) set.add(key);
+          else set.delete(key);
           item.completedDates = [...set];
         } else {
           item.done = Boolean(done);
           item.doneAt = item.done ? t : null;
         }
+        item.updatedAt = t;
+        state.items[i] = normalizeItem(item, t);
+        return structuredClone(state.items[i]);
+      });
+    },
+
+    /**
+     * Hourly items: "I just did it". Re-anchors the series at the current minute, so the next
+     * slot is one interval from now, and ticks the current slot.
+     */
+    restartHourly(id) {
+      return mutate((state) => {
+        const i = findIndex(state, id);
+        const item = { ...state.items[i] };
+        if (item.recurrence?.freq !== 'hourly') throw new TypeError('not an hourly item');
+        const t = now();
+        const d = new Date(t);
+        const date = toDateStr(d);
+        const time = timeStrOf(d);
+        item.date = date;
+        item.time = time;
+        item.endTime = null;
+        item.completedDates = [`${date}@${time}`];
         item.updatedAt = t;
         state.items[i] = normalizeItem(item, t);
         return structuredClone(state.items[i]);

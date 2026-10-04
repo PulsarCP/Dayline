@@ -13,7 +13,7 @@
 
 import { toDateStr } from './dates.js';
 import { DEFAULT_SETTINGS, isDoneOn } from './model.js';
-import { occurrencesBetween } from './recurrence.js';
+import { hourlyState, occurrenceKey, occurrencesBetween } from './recurrence.js';
 import {
   alarmName, badgeCount, isOverdue, isStillRelevant, missedReminders, parseAlarmName,
   splitReminderId, upcomingReminders,
@@ -177,14 +177,18 @@ export function createScheduler({ api, store, backend, now = () => new Date() })
       contextMessage: context,
       priority: 2,
       requireInteraction: true,
-      buttons: [{ title: `Snooze ${settings.snoozeMin} min` }, { title: 'Mark done' }],
+      buttons: item.checkable === false
+        ? [{ title: `Snooze ${settings.snoozeMin} min` }]
+        : [{ title: `Snooze ${settings.snoozeMin} min` }, { title: 'Mark done' }],
     });
   }
 
   /** Is this reminder still valid given the current data? Returns the item if so. */
   function validate(state, parts, kind) {
     const item = state.items.find((it) => it.id === parts.itemId);
-    if (!item || !occurrenceExists(item, parts.date) || isDoneOn(item, parts.date)) return null;
+    if (!item || !occurrenceExists(item, parts.date)) return null;
+    const slot = kind === 'rem' ? splitReminderId(parts.reminderId).slot : null;
+    if (isDoneOn(item, parts.date, slot)) return null;
     if (kind === 'rem' && !item.reminders.some((r) => r.offsetMin === splitReminderId(parts.reminderId).offsetMin)) {
       return null;
     }
@@ -277,7 +281,14 @@ export function createScheduler({ api, store, backend, now = () => new Date() })
       await doSnooze(parts, settings);
     } else if (index === 1) {
       const item = state.items.find((it) => it.id === parts.itemId);
-      if (item) await store.setDone(parts.itemId, true, parts.date);
+      if (item && item.checkable !== false) {
+        let slot = parts.reminderId ? splitReminderId(parts.reminderId).slot : null;
+        if (!slot && item.recurrence?.freq === 'hourly') {
+          const st = hourlyState(item, now());
+          if (st && parts.date === toDateStr(now())) slot = st.slot; // snoozed reminder: the slot now due
+        }
+        await store.setDone(parts.itemId, true, occurrenceKey(item, parts.date, slot));
+      }
       const snoozes = await readMap(SNOOZES_KEY);
       delete snoozes[snoozeName(parts.itemId, parts.date)];
       await backend.set(SNOOZES_KEY, snoozes);

@@ -32,6 +32,15 @@ const MONTH_RE =
   '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
 const WD_RE = `(${Object.keys(WEEKDAY_FULL).join('|')}|${Object.keys(WEEKDAY_ABBR).join('|')})`;
 
+const WD_ONE = WD_RE.replace(/^\(/, '(?:');
+const RANGE_SEP = '(?:-|\\u2013|\\u2014|to|through|thru|until)';
+/** Weekdays from `a` to `b` inclusive, wrapping over the weekend ("fri-mon" = 5,6,0,1). */
+const weekdayRun = (a, b) => {
+  const out = [a];
+  for (let d = a; d !== b; ) { d = (d + 1) % 7; out.push(d); }
+  return out;
+};
+
 function lookupWeekday(token) {
   const t = token.toLowerCase();
   if (t in WEEKDAY_FULL) return { idx: WEEKDAY_FULL[t], abbr: false };
@@ -110,7 +119,20 @@ export function parseQuickAdd(input, now = new Date()) {
   }
 
   // 1. Recurrence
-  let r = consume(text, /\bevery\s+weekdays?\b/i, () => ({
+  let r = null;
+  if (!r) {
+    // "every monday to friday", "every mon-fri", "every day from monday to friday"
+    const re = new RegExp(`\\bevery\\s+(?:(other|on)\\s+)?(?:day\\s+)?(?:from\\s+)?${WD_RE}s?\\s*${RANGE_SEP}\\s*${WD_RE}s?\\b`, 'i');
+    r = consume(text, re, (m) => {
+      const a = lookupWeekday(m[2]).idx;
+      const b = lookupWeekday(m[3]).idx;
+      if (a === undefined || b === undefined || a === b) return undefined;
+      return safeRecurrence({
+        freq: 'weekly', interval: m[1]?.toLowerCase() === 'other' ? 2 : 1, weekdays: weekdayRun(a, b),
+      });
+    });
+  }
+  if (!r) r = consume(text, /\b(?:every\s+weekdays?|(?:on\s+)?weekdays)\b/i, () => ({
     freq: 'weekly', interval: 1, weekdays: [1, 2, 3, 4, 5],
   }));
   if (!r) {
@@ -265,6 +287,31 @@ export function parseQuickAdd(input, now = new Date()) {
           date = v;
         }
         break;
+      }
+    }
+  }
+
+  // 6a. Weekday range: "monday to friday", "mon-fri", "from friday until sunday".
+  //     With an existing weekly repeat it picks the repeat's days; otherwise it is a multi-day
+  //     item from the next first-day to the following last-day.
+  if (!date) {
+    const re = new RegExp(`\\b(?:from\\s+)?(?:(?:on|next|this)\\s+)?${WD_RE}s?\\s*${RANGE_SEP}\\s*${WD_RE}s?\\b`, 'i');
+    const w = consume(text, re, (m) => {
+      const a = lookupWeekday(m[1]).idx;
+      const b = lookupWeekday(m[2]).idx;
+      if (a === undefined || b === undefined || a === b) return undefined;
+      return [a, b];
+    });
+    if (w) {
+      const [a, b] = take(w, 'date');
+      if (recurrence?.freq === 'weekly' && !recurrence.weekdays) {
+        recurrence = { ...recurrence, weekdays: weekdayRun(a, b) };
+      } else if (!recurrence) {
+        date = addDays(today, ((a - weekdayOf(today) + 6) % 7) + 1);
+        endDate = addDays(date, (b - a + 7) % 7);
+      } else {
+        // a repeat of another kind: keep the repeat, use the first weekday as the start day
+        date = addDays(today, ((a - weekdayOf(today) + 6) % 7) + 1);
       }
     }
   }

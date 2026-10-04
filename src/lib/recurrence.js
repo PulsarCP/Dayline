@@ -107,6 +107,34 @@ export function slotsOn(item, date) {
   return out;
 }
 
+/** Key under which one occurrence is marked done: the date, or `date@HH:MM` for one slot of an hourly item. */
+export const occurrenceKey = (item, date, slot = null) =>
+  (item.recurrence?.freq === 'hourly' && slot ? `${date}@${slot}` : date);
+
+const minutesOf = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+
+/**
+ * What an hourly item shows today: the latest slot that is already due (open until ticked),
+ * otherwise the next upcoming one. Returns null when it does not occur today.
+ * { slot, done, next }  -- `next` is the slot after the one shown (or null).
+ */
+export function hourlyState(item, now) {
+  if (item.recurrence?.freq !== 'hourly') return null;
+  const today = toDateStr(now);
+  if (!occurrencesBetween(item, today, today).length) return null;
+  const slots = slotsOn(item, today);
+  if (!slots.length) return null;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const isDone = (s) => (item.completedDates ?? []).includes(`${today}@${s}`);
+  const due = slots.filter((s) => minutesOf(s) <= nowMin);
+  const later = slots.filter((s) => minutesOf(s) > nowMin);
+  if (due.length) {
+    const slot = due[due.length - 1];
+    return { slot, done: isDone(slot), next: later[0] ?? null };
+  }
+  return { slot: later[0], done: isDone(later[0]), next: later[1] ?? null };
+}
+
 /** First occurrence strictly after `after` (or on it with includeAfter), or null. */
 export function nextOccurrence(item, after, { includeAfter = false } = {}) {
   const from = includeAfter ? after : addDays(after, 1);

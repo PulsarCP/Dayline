@@ -3,15 +3,16 @@
 
 import { addDays, diffDays, parseDateStr, toDateStr } from './dates.js';
 import { isDoneOn } from './model.js';
-import { occurrencesBetween } from './recurrence.js';
+import { hourlyState, occurrencesBetween } from './recurrence.js';
 import { isOverdue } from './reminders.js';
 
 export const UPCOMING_DAYS = 7;
 export const MAX_LATER = 50;
 export const MAX_COMPLETED = 20;
 
+const timeOf = (r) => r.slot ?? r.item.time ?? '';
 const byTime = (a, b) =>
-  (a.item.time ?? '').localeCompare(b.item.time ?? '') // all-day first
+  timeOf(a).localeCompare(timeOf(b)) // all-day first
   || a.item.title.localeCompare(b.item.title)
   || a.item.createdAt - b.item.createdAt;
 
@@ -26,7 +27,8 @@ const byDateThenTime = (a, b) => a.date.localeCompare(b.date) || byTime(a, b);
  *            span:{index:number,total:number}|null}} Row
  */
 
-const row = (item, date, done, overdue = false, span = null) => ({ item, date, done, overdue, span });
+const row = (item, date, done, overdue = false, span = null, extra = {}) =>
+  ({ item, date, done, overdue, span, slot: null, next: null, ...extra });
 
 /**
  * @param {object[]} items
@@ -67,7 +69,14 @@ export function buildViews(items, now, { showDone = false, category = 'all' } = 
     }
 
     if (item.recurrence) {
+      const hourly = hourlyState(item, now);
       for (const date of occurrencesBetween(item, today, horizon)) {
+        if (hourly && date === today) {
+          // An hourly item is one row today: the slot that is due (or next), tickable each time.
+          if (hourly.done && !showDone) continue;
+          todayRows.push(row(item, date, hourly.done, false, null, { slot: hourly.slot, next: hourly.next }));
+          continue;
+        }
         const done = isDoneOn(item, date);
         if (done && !showDone) continue;
         if (date === today) todayRows.push(row(item, date, done));
@@ -79,6 +88,7 @@ export function buildViews(items, now, { showDone = false, category = 'all' } = 
     // One-off item, possibly spanning several days.
     const last = item.endDate ?? item.date;
     if (item.done && !showDone) continue;
+    if (item.checkable === false && last < today) continue; // a note about a past day: nothing to do
 
     if (!item.done && isOverdue(item, now)) {
       overdue.push(row(item, last, false, true)); // dated by when it was due (its last day)
@@ -110,11 +120,12 @@ export function buildViews(items, now, { showDone = false, category = 'all' } = 
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, rows]) => ({ date, rows: rows.sort(doneLast) }));
 
-  const open = (rows) => rows.filter((r) => !r.done).length;
+  // Items without a done checkbox are notes: they cannot be finished, so they never count as "to do".
+  const open = (rows) => rows.filter((r) => !r.done && r.item.checkable !== false).length;
   // Upcoming counts things, not days: a daily habit or a 5-day trip counts once.
   const upcomingItems = new Set();
-  for (const g of groups) for (const r of g.rows) if (!r.done) upcomingItems.add(r.item.id);
-  for (const r of later) if (!r.done) upcomingItems.add(r.item.id);
+  for (const g of groups) for (const r of g.rows) if (!r.done && r.item.checkable !== false) upcomingItems.add(r.item.id);
+  for (const r of later) if (!r.done && r.item.checkable !== false) upcomingItems.add(r.item.id);
 
   return {
     today: { overdue, rows: todayRows, completed: completed.slice(0, MAX_COMPLETED) },

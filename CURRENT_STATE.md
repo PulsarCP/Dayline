@@ -1,6 +1,6 @@
 # CURRENT_STATE
 
-Handoff for the next chat. Updated at the end of **Phase 4** (calendar page, All list with search/filters) together with multi-weekday and hourly repeats.
+Handoff for the next chat. Updated after **Phase 4** (calendar page, All list with search/filters, multi-weekday and hourly repeats) and a round of improvements after Daniel used it for a few days (per-slot done and restart for hourly items, `checkable` / `showOnCalendar` item options, weekday ranges, popup always opens on Today, no visible popup scrollbar, multi-day select toggle).
 
 Repo: https://github.com/PulsarCP/Dayline (branch `main`). Plain JavaScript ES modules, Manifest V3 (v0.4.0), no build step, no runtime dependencies. Tests: `npm test` (Node built-in runner, ~140 tests). End-to-end: `python3 tests/e2e/e2e.py` (Playwright + Chromium).
 
@@ -22,12 +22,12 @@ Repo: https://github.com/PulsarCP/Dayline (branch `main`). Plain JavaScript ES m
 `pad`, `toDateStr(Date)`, `parseDateStr(str) -> Date|null`, `isValidDateStr`, `isValidTimeStr`, `timeToMinutes`, `timeStrOf(Date)`, `addDays`, `addMonths` (clamps), `daysInMonth`, `diffDays(a, b)`, `weekdayOf` (0 = Sunday), `combine(dateStr, timeStr) -> Date`.
 
 ### `src/lib/recurrence.js`
-Rule: `{freq: 'hourly'|'daily'|'weekly'|'monthly', interval, weekdays?, until?}`. Hourly: interval 1..23, needs a start time (model throws otherwise); the occurrence is the day, `slotsOn(item, date)` lists the clock times (continuous from the first start, so they shift per day when 24 is not a multiple). Reminder ids for hourly are `offset@HH:MM` (`splitReminderId`); done/snooze are per day. `normalizeRecurrence`, `occurrencesBetween(item, from, to)` (window capped at 800 days; a one-off item yields only its own `date`), `nextOccurrence`.
+Rule: `{freq: 'hourly'|'daily'|'weekly'|'monthly', interval, weekdays?, until?}`. Hourly (done per slot: `completedDates` holds `YYYY-MM-DD@HH:MM`; `hourlyState(item, now)` gives the row Today shows; `store.restartHourly(id)` re-anchors at now and ticks that slot): interval 1..23, needs a start time (model throws otherwise); the occurrence is the day, `slotsOn(item, date)` lists the clock times (continuous from the first start, so they shift per day when 24 is not a multiple). Reminder ids for hourly are `offset@HH:MM` (`splitReminderId`); done/snooze are per day. `normalizeRecurrence`, `occurrencesBetween(item, from, to)` (window capped at 800 days; a one-off item yields only its own `date`), `nextOccurrence`.
 
 ### `src/lib/model.js`
 `normalizeItem(raw, now?)` (throws on invalid; builds a fresh object from known fields), `normalizeCategory`, `normalizeSettings`, `isDoneOn(item, date)`, `lastDayOf(item)`, `LIMITS`, `TYPES`, `COLORS`, `SNOOZE_CHOICES`, `DEFAULT_SETTINGS`.
 
-Item: `{id, title, notes, type: 'task'|'event', date, endDate, time, endTime, recurrence, categoryId, reminders: [{offsetMin}], done, doneAt, completedDates, createdAt, updatedAt}`. `endTime` must be after `time` only for single-day items.
+Item: `{id, title, notes, type: 'task'|'event', date, endDate, time, endTime, recurrence, checkable (false = no done checkbox; never overdue, not counted, vanishes after its day), showOnCalendar (false = not on the month grid; still in the day panel), categoryId, reminders: [{offsetMin}], done, doneAt, completedDates, createdAt, updatedAt}`. `endTime` must be after `time` only for single-day items.
 Settings: `{allDayReminderTime: '09:00', defaultReminderMin: 10|null, snoozeMin: 5|10|15|30|60}`.
 Limits: title 200, notes 2000, 10 reminders, offsets up to 60 days, 5000 items, 20 sections, section name 30, span up to 366 days.
 
@@ -68,7 +68,7 @@ Popup: the "No section" filter chip was removed (the add/edit select still has "
 
 ## Testing status
 
-- 150 unit tests (149 pass, 1 skipped: `navigator.locks` path, Node 22 lacks it) pass under `TZ=Europe/Rome`, `America/New_York`, `Pacific/Auckland`, `UTC`.
+- 158 unit tests (157 pass, 1 skipped: `navigator.locks` path, Node 22 lacks it) pass under `TZ=Europe/Rome`, `America/New_York`, `Pacific/Auckland`, `UTC`.
 - `tests/e2e/e2e.py` (headless Chromium 141, extension loaded unpacked): all checks pass. Covers quick-add ranges and `#tags`, sections and filters, edit form, options page (sections, settings, export, merge/replace import, corrupt file), real worker: alarm created after adding an item, notification shown, Snooze, snoozed reminder returning, Mark done clearing alarms and badge, startup catch-up, no console errors.
 
 Not verified (needs Daniel's real Chrome): how the OS actually displays notifications (Windows/macOS/Linux settings, Focus modes), `requireInteraction` behaviour per OS, popup size and focus in headed Chrome, behaviour after a real browser restart (alarm persistence is handled by re-deriving on startup, but only simulated), and the `navigator.locks` write path.
@@ -80,10 +80,10 @@ Not verified (needs Daniel's real Chrome): how the OS actually displays notifica
 - A multi-day item appears once per day in Upcoming (7 days max), counted once.
 - Recurring items: missed past occurrences are not flagged overdue and not counted in the badge (by design).
 - Editing a repeating item edits the whole series.
-- Hourly repeats: Mark done / Snooze apply to the whole day's series, not one slot; the calendar shows the series once per day.
+- Hourly repeats: Mark done on a notification ticks that slot; the calendar page lists the series once per day and has no tick box for it (tick in the popup).
 - Calendar page: multi-day items are chips on each day (no continuous bars); Monday-first weeks.
 - Rendering rule: every user-supplied string goes through `textContent`/text nodes, never `innerHTML` (an `<img onerror>` title is verified inert).
 
 ## Next
 
-Remind Daniel of the v2 list above (priority levels, subtasks, `chrome.storage.sync`, keyboard shortcuts, right-click "Add to schedule", `.ics` export, daily agenda notification, undo). Possible polish: continuous multi-day bars, drag to move, per-slot completion for hourly items.
+(v2 list still on hold at Daniel's request.) Remind Daniel of the v2 list above (priority levels, subtasks, `chrome.storage.sync`, keyboard shortcuts, right-click "Add to schedule", `.ics` export, daily agenda notification, undo). Possible polish: continuous multi-day bars, drag to move, per-slot completion for hourly items.

@@ -75,6 +75,14 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
   });
   const reminderHint = h('div', { class: 'hint' }, 'Add a date to set reminders.');
 
+  const checkable = h('input', { type: 'checkbox', id: id('checkable') });
+  checkable.checked = item.checkable !== false;
+  const onCal = h('input', { type: 'checkbox', id: id('oncal') });
+  onCal.checked = item.showOnCalendar !== false;
+  const toggles = h('div', { class: 'toggles' },
+    h('label', { class: 'toggle' }, checkable, h('span', {}, 'Has a done checkbox (turn off for notes and habits)')),
+    h('label', { class: 'toggle' }, onCal, h('span', {}, 'Show on the calendar (turn off to keep a busy daily item off the grid)')));
+
   const notes = h('textarea', { class: 'textarea', id: id('notes'), maxlength: String(LIMITS.notes), rows: '3' });
   notes.value = item.notes;
 
@@ -104,6 +112,7 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
     repeatBox,
     h('div', { class: 'field' }, h('span', { class: 'label' }, 'Reminders'),
       h('div', { class: 'pills' }, reminderBoxes.map((r) => r.el)), reminderHint),
+    toggles,
     field('Notes', notes, 'notes'),
     error,
     h('div', { class: 'actions' }, saveBtn, cancelBtn, h('span', { class: 'grow' }), deleteBtn));
@@ -155,6 +164,8 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
       time: hasDate && time.value ? time.value : null,
       endTime: hasDate && time.value && endTime.value ? endTime.value : null,
       recurrence,
+      checkable: checkable.checked,
+      showOnCalendar: onCal.checked,
       reminders: hasDate
         ? reminderBoxes.filter((r) => r.box.checked).map((r) => ({ offsetMin: r.min }))
         : [],

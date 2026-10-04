@@ -8,7 +8,7 @@ test('minimal item gets sane defaults', () => {
   const it = normalizeItem(base, 1000);
   assert.deepEqual(it, {
     id: 'a1', title: 'Test', notes: '', type: 'task', date: null, endDate: null, time: null, endTime: null,
-    recurrence: null, categoryId: null, reminders: [], done: false, doneAt: null, completedDates: [],
+    recurrence: null, checkable: true, showOnCalendar: true, categoryId: null, reminders: [], done: false, doneAt: null, completedDates: [],
     createdAt: 1000, updatedAt: 1000,
   });
 });
