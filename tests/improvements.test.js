@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { createMemoryBackend, createStore } from '../src/lib/store.js';
 import { createScheduler } from '../src/lib/scheduler.js';
 import { normalizeItem, isDoneOn } from '../src/lib/model.js';
-import { hourlyState } from '../src/lib/recurrence.js';
+import { hourlyState, slotsOn } from '../src/lib/recurrence.js';
 import { badgeCount, isOverdue, remindersBetween, alarmName } from '../src/lib/reminders.js';
 import { buildViews } from '../src/lib/views.js';
 import { filterAll } from '../src/lib/calendar.js';
 import { parseQuickAdd } from '../src/lib/parser.js';
+import { occurrencesBetween } from '../src/lib/recurrence.js';
 import { createClock, createFakeChrome } from './helpers/fake-chrome.js';
 
 const at = (d, t) => { const [y, m, dd] = d.split('-').map(Number); const [h, mi] = t.split(':').map(Number); return new Date(y, m - 1, dd, h, mi); };
@@ -53,17 +54,17 @@ test('per-slot done: stored per slot, skipped by reminders, counted by the badge
   await assert.rejects(() => createStore(createMemoryBackend(), { newId: () => 'x', useLocks: false }).setDone('nope', true, 'bad'));
 });
 
-test('restartHourly: re-anchors at now and ticks the current slot', async () => {
+test('restart: re-anchors at now and ticks the current slot', async () => {
   const t = at('2026-10-04', '16:12').getTime();
   const s = createStore(createMemoryBackend(), { now: () => t, newId: () => 'w2', useLocks: false });
   await s.add({ title: 'Water', date: '2026-10-01', time: '09:00', recurrence: { freq: 'hourly', interval: 5 } });
-  const r = await s.restartHourly('w2');
+  const r = await s.restart('w2');
   assert.equal(r.date, '2026-10-04');
   assert.equal(r.time, '16:12');
   assert.deepEqual(r.completedDates, ['2026-10-04@16:12']);
   assert.deepEqual(hourlyState(r, at('2026-10-04', '16:30')), { slot: '16:12', done: true, next: '21:12' });
   await s.add({ title: 'Plain', id: 'p' });
-  await assert.rejects(s.restartHourly('p'));
+  await assert.rejects(s.restart('p'));
 });
 
 test('Today shows one row for an hourly item, with the due slot and the next one', () => {
@@ -139,3 +140,70 @@ test('quick-add: weekday ranges', () => {
   assert.equal(parseQuickAdd('class mon-mon', now).title, 'class mon-mon');
   assert.equal(parseQuickAdd('report friday', now).endDate, null);
 });
+
+test('restart works for every kind of repeat', async () => {
+  const t = at('2026-10-07', '11:20').getTime(); // Wednesday
+  const mkStore = () => createStore(createMemoryBackend(), { now: () => t, newId: () => 'r1', useLocks: false });
+  let s = mkStore();
+  await s.add({ title: 'Every 3 days', date: '2026-09-20', time: '09:00', recurrence: { freq: 'daily', interval: 3 } });
+  let r = await s.restart('r1');
+  assert.deepEqual([r.date, r.time], ['2026-10-07', '11:20']);
+  assert.deepEqual(r.completedDates, ['2026-10-07']);
+  assert.deepEqual(occurrencesOf(r, '2026-10-07', '2026-10-17'), ['2026-10-07', '2026-10-10', '2026-10-13', '2026-10-16']);
+
+  s = mkStore();
+  await s.add({ title: 'Every 2 weeks', date: '2026-09-01', recurrence: { freq: 'weekly', interval: 2 } });
+  r = await s.restart('r1');
+  assert.equal(r.time, null); // all-day stays all-day
+  assert.deepEqual(occurrencesOf(r, '2026-10-07', '2026-11-10'), ['2026-10-07', '2026-10-21', '2026-11-04']);
+
+  s = mkStore();
+  await s.add({ title: 'Mon+Fri', date: '2026-09-01', recurrence: { freq: 'weekly', weekdays: [1, 5] } });
+  r = await s.restart('r1'); // today is a Wednesday: nothing to tick, series keeps its weekdays
+  assert.deepEqual(r.completedDates, []);
+  assert.deepEqual(r.recurrence.weekdays, [1, 5]);
+
+  s = mkStore();
+  await s.add({ title: 'Monthly', date: '2026-01-31', recurrence: { freq: 'monthly' } });
+  r = await s.restart('r1');
+  assert.equal(r.date, '2026-10-07');
+
+  s = mkStore();
+  await s.add({ title: 'Note habit', date: '2026-10-01', recurrence: { freq: 'daily' }, checkable: false });
+  r = await s.restart('r1');
+  assert.deepEqual(r.completedDates, []); // nothing to tick on an item without a checkbox
+});
+
+test('hourly with an end time repeats only inside that window, fresh each day', () => {
+  const it = mk({ date: '2026-10-05', time: '09:00', endTime: '21:00', recurrence: { freq: 'hourly', interval: 4 } });
+  assert.deepEqual(slotsOn(it, '2026-10-05'), ['09:00', '13:00', '17:00', '21:00']);
+  assert.deepEqual(slotsOn(it, '2026-10-06'), ['09:00', '13:00', '17:00', '21:00']);
+  const from = at('2026-10-05', '00:00').getTime();
+  const withRem = { ...it, reminders: [{ offsetMin: 0 }] };
+  assert.equal(remindersBetween([withRem], from, at('2026-10-06', '23:00').getTime()).length, 8);
+});
+
+test('quick-add: time ranges set the end time', () => {
+  const now = at('2026-10-04', '16:00');
+  const p = parseQuickAdd('weekday monday-friday 10:00AM-10:00PM X', now);
+  assert.equal(p.title, 'X');
+  assert.deepEqual(p.recurrence.weekdays, [1, 2, 3, 4, 5]);
+  assert.deepEqual([p.time, p.endTime], ['10:00', '22:00']);
+  const cases = {
+    'standup 9-5pm': ['09:00', '17:00'], 'lunch 12:30 to 13:30': ['12:30', '13:30'], 'call 9am-5': ['09:00', '17:00'],
+    'meeting 10am to 11am tomorrow': ['10:00', '11:00'], 'dentist 3pm': ['15:00', null],
+  };
+  for (const [text, [a, b]] of Object.entries(cases)) {
+    const r = parseQuickAdd(text, now);
+    assert.deepEqual([r.time, r.endTime], [a, b], text);
+  }
+  const j = parseQuickAdd('7-8 october Job Fair 2026', now); // digits only: still a date range
+  assert.deepEqual([j.date, j.endDate, j.time, j.endTime], ['2026-10-07', '2026-10-08', null, null]);
+  const night = parseQuickAdd('party 22:00-02:00 tomorrow', now);
+  assert.deepEqual([night.date, night.endDate, night.time, night.endTime], ['2026-10-05', '2026-10-06', '22:00', '02:00']);
+  assert.equal(night.title, 'party');
+  const win = parseQuickAdd('water every 2 hours 9:00-21:00', now);
+  assert.deepEqual([win.recurrence.freq, win.time, win.endTime], ['hourly', '09:00', '21:00']);
+});
+
+const occurrencesOf = (item, a, b) => occurrencesBetween(item, a, b);

@@ -88,7 +88,9 @@ export function occurrencesBetween(item, from, to) {
 
 /**
  * Clock times ("HH:MM") at which an hourly item fires on `date`, counted continuously
- * from its first start (date + time) in steps of `interval` hours. Non-hourly items
+
+ * from its first start (date + time) in steps of `interval` hours, or, when the item has an
+ * end time, only inside that window each day (09:00-21:00 every 2 h: 09, 11, ... 21). Non-hourly items
  * have a single slot (their own time, or null for all-day).
  */
 export function slotsOn(item, date) {
@@ -96,6 +98,14 @@ export function slotsOn(item, date) {
   if (r?.freq !== 'hourly' || !item.time) return [item.time ?? null];
   const [h, m] = item.time.split(':').map(Number);
   const step = r.interval * 60;
+  if (item.endTime) {
+    // A window: every `interval` hours from the start time until the end time, fresh each day.
+    const out = [];
+    for (let t = h * 60 + m; t <= minutesOf(item.endTime); t += step) {
+      out.push(`${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`);
+    }
+    return out;
+  }
   const dayStart = diffDays(item.date, date) * 1440 - (h * 60 + m); // minutes since first slot
   const out = [];
   for (let k = Math.max(0, Math.ceil(dayStart / step)); ; k++) {

@@ -295,7 +295,7 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
     }
     const categoryId = await resolveSection(p.categoryTag);
     const item = await store.add({
-      title: p.title, date, endDate, time: p.time, recurrence: p.recurrence, categoryId,
+      title: p.title, date, endDate, time: p.time, endTime: p.endTime, recurrence: p.recurrence, categoryId,
       type: p.time || endDate ? 'event' : 'task',
       reminders: remindersFor({ date, time: p.time }, state.settings.defaultReminderMin),
     });
@@ -331,6 +331,7 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
           await close();
         },
         onCancel: close,
+        onRestart: async () => { await store.restart(id); await close(); },
         onDelete: async () => { await store.remove(id); await close(); },
       }));
   }
@@ -347,19 +348,35 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
     if (item.date && !item.endDate && item.recurrence?.freq !== 'hourly') meta.push(h('span', {}, icon('clock'), formatWhen(item)));
     else if (item.date && row.span?.index === 1 && item.time) meta.push(h('span', {}, icon('clock'), formatWhen(item)));
     if (item.recurrence) meta.push(h('span', {}, icon('repeat'), repeatLabel(item.recurrence)));
-    if (!showDate && item.recurrence?.freq === 'hourly' && row.date) {
-      const slots = slotsOn(item, row.date);
-      meta.push(h('span', {}, icon('clock'), slots.length > 6 ? `${slots.slice(0, 6).join(', ')} …` : slots.join(', ')));
-    }
     if (item.showOnCalendar === false) meta.push(h('span', { title: 'Hidden from the calendar grid' }, icon('eyeoff'), 'Hidden on grid'));
     if (item.date && item.reminders.length && !row.done) meta.push(h('span', {}, icon('bell'), remindersSummary(item)));
     const cat = categoryOf(item, state.categories);
     if (cat) meta.push(h('span', { class: 'sect', dataset: { color: cat.color } }, h('i', { class: 'dot' }), cat.name));
 
     // No tick box: for notes, for a series shown once in the All list, and for hourly items
-    // (tick those one reminder at a time in the toolbar popup).
-    const canCheck = item.checkable !== false && !(showDate && item.recurrence)
-      && item.recurrence?.freq !== 'hourly';
+    // (those get one tick box per time of the day, below the title).
+    const hourly = item.recurrence?.freq === 'hourly';
+    const canCheck = item.checkable !== false && !(showDate && item.recurrence) && !hourly;
+    let pills = null;
+    if (hourly && !showDate && row.date && item.checkable !== false) {
+      pills = h('div', { class: 'slots' }, slotsOn(item, row.date).map((slot) => {
+        const key = `${row.date}@${slot}`;
+        const box = h('input', { type: 'checkbox', 'aria-label': `${slot}: ${item.title}` });
+        box.checked = item.completedDates.includes(key);
+        box.addEventListener('change', async () => {
+          await store.setDone(item.id, box.checked, key);
+          await refresh();
+        });
+        return h('label', { class: `slot${box.checked ? ' on' : ''}` }, box, h('span', {}, slot));
+      }));
+    } else if (hourly && !showDate && row.date) {
+      pills = h('div', { class: 'slots' }, slotsOn(item, row.date).map((slot) => h('span', { class: 'slot plain' }, slot)));
+    }
+    const restart = item.recurrence && row.date === today ? h('button', {
+      type: 'button', class: 'iconbtn restart', 'aria-label': `Restart from now: ${item.title}`,
+      title: `Restart from now (${repeatLabel(item.recurrence)}, counted from this moment)`,
+    }, icon('rotate')) : null;
+    restart?.addEventListener('click', async () => { await store.restart(item.id); await refresh(); });
     const check = canCheck ? h('input', {
       type: 'checkbox', class: 'check', 'aria-label': `${row.done ? 'Mark not done' : 'Mark done'}: ${item.title}`,
     }) : h('span', { class: 'check-spacer' });
@@ -375,7 +392,7 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
     body.addEventListener('click', () => { state.editing = { id: item.id }; render(); });
     return h('li', {
       class: `row${row.done ? ' done' : ''}${row.overdue ? ' overdue' : ''}`, dataset: { id: item.id, date: row.date ?? '' },
-    }, check, body);
+    }, check, h('div', { class: 'rowmain' }, body, pills), restart);
   }
 
   // ---------- "All" view ----------

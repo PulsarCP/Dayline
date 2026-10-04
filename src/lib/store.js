@@ -6,6 +6,7 @@
 // which are separate JS contexts; otherwise an in-process promise queue is used.
 
 import { addDays, diffDays, isValidDateStr, timeStrOf, toDateStr } from './dates.js';
+import { occurrencesBetween } from './recurrence.js';
 import {
   DEFAULT_SETTINGS, LIMITS, normalizeCategory, normalizeItem, normalizeSettings,
 } from './model.js';
@@ -190,22 +191,30 @@ export function createStore(backend, opts = {}) {
     },
 
     /**
-     * Hourly items: "I just did it". Re-anchors the series at the current minute, so the next
-     * slot is one interval from now, and ticks the current slot.
+     * "I just did it": restart a repeating item's cycle from this moment. The series is
+     * re-anchored at today (and at the current time when the item has a time), so "every 5 hours"
+     * gives the next slot 5 h from now, "every 3 days" counts 3 days from today, and so on.
+     * Today's occurrence is ticked.
      */
-    restartHourly(id) {
+    restart(id) {
       return mutate((state) => {
         const i = findIndex(state, id);
         const item = { ...state.items[i] };
-        if (item.recurrence?.freq !== 'hourly') throw new TypeError('not an hourly item');
+        if (!item.recurrence) throw new TypeError('not a repeating item');
         const t = now();
         const d = new Date(t);
         const date = toDateStr(d);
-        const time = timeStrOf(d);
         item.date = date;
-        item.time = time;
-        item.endTime = null;
-        item.completedDates = [`${date}@${time}`];
+        if (item.recurrence.freq === 'hourly' || item.time) {
+          item.time = timeStrOf(d);
+          if (item.endTime && item.endTime <= item.time) item.endTime = null;
+        }
+        const hourly = item.recurrence.freq === 'hourly';
+        item.completedDates = hourly ? [] : [...item.completedDates];
+        if (item.checkable !== false) {
+          if (hourly) item.completedDates.push(`${date}@${item.time}`);
+          else if (occurrencesBetween(item, date, date).length) item.completedDates.push(date);
+        }
         item.updatedAt = t;
         state.items[i] = normalizeItem(item, t);
         return structuredClone(state.items[i]);

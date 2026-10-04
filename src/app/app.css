@@ -84,3 +84,13 @@ body { min-height: 100vh; }
 
 .btn.toggle-btn[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .month-nav { flex-wrap: wrap; justify-content: flex-end; }
+
+.rowmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.row .restart { color: var(--accent); flex: none; }
+.slots { display: flex; flex-wrap: wrap; gap: 6px; }
+.slot { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 6px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; background: var(--bg); cursor: pointer; }
+.slot.plain { cursor: default; padding-left: 9px; color: var(--muted); }
+.slot input { margin: 0; accent-color: var(--accent); }
+.slot.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); text-decoration: line-through; }
+.day-panel { scrollbar-width: none; }
+.day-panel::-webkit-scrollbar { display: none; }

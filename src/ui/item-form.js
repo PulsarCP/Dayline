@@ -15,7 +15,7 @@ const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
  * @param {Document} doc
  * @param {{item: object, categories: object[], onSave: Function, onCancel: Function, onDelete: Function}} o
  */
-export function createItemForm(doc, { item, categories, onSave, onCancel, onDelete }) {
+export function createItemForm(doc, { item, categories, onSave, onCancel, onDelete, onRestart }) {
   const h = createH(doc);
   const icon = createIcon(doc);
   const uid = `f${Math.random().toString(36).slice(2, 8)}`;
@@ -92,6 +92,7 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
   const endDateField = field('Ends on (multi-day)', endDate, 'endDate', { dataset: { role: 'endDate' } });
   const timeRow = h('div', { class: 'row2', dataset: { role: 'times' } },
     field('Start time', time, 'time'), field('End time', endTime, 'endTime'));
+  const hourHint = h('div', { class: 'hint', hidden: true }, 'Every few hours: with an end time it repeats only between the start and end time each day (for example 09:00 to 21:00); without one it repeats around the clock.');
   const repeatBox = h('div', { class: 'repeat-box', dataset: { role: 'repeat-opts' } },
     h('div', { class: 'every' }, h('span', {}, 'Every'), interval, intervalUnit),
     h('div', { class: 'days', dataset: { role: 'weekdays' } }, weekdayBoxes.map((w) => w.el)),
@@ -99,6 +100,9 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
 
   const saveBtn = h('button', { type: 'submit', class: 'btn primary' }, icon('check'), 'Save');
   const cancelBtn = h('button', { type: 'button', class: 'btn' }, 'Cancel');
+  const restartBtn = onRestart && item.recurrence
+    ? h('button', { type: 'button', class: 'btn', title: 'The cycle counts from this moment, and today is ticked' }, icon('rotate'), 'Restart from now')
+    : null;
   const deleteBtn = h('button', { type: 'button', class: 'btn danger' }, icon('trash'), 'Delete');
 
   const form = h('form', { class: 'item-form', novalidate: true },
@@ -109,13 +113,14 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
     endDateField,
     timeRow,
     field('Repeat', repeat, 'repeat'),
+    hourHint,
     repeatBox,
     h('div', { class: 'field' }, h('span', { class: 'label' }, 'Reminders'),
       h('div', { class: 'pills' }, reminderBoxes.map((r) => r.el)), reminderHint),
     toggles,
     field('Notes', notes, 'notes'),
     error,
-    h('div', { class: 'actions' }, saveBtn, cancelBtn, h('span', { class: 'grow' }), deleteBtn));
+    h('div', { class: 'actions' }, saveBtn, cancelBtn, restartBtn, h('span', { class: 'grow' }), deleteBtn));
 
   // ----- behaviour -----
   function syncVisibility() {
@@ -125,6 +130,7 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
     timeRow.hidden = !hasDate;
     repeat.closest('.field').hidden = !hasDate;
     repeatBox.hidden = !hasDate || !repeating;
+    hourHint.hidden = !hasDate || repeat.value !== 'hourly';
     repeatBox.querySelector('[data-role=weekdays]').hidden = repeat.value !== 'weekly';
     intervalUnit.textContent = { hourly: 'hour(s)', daily: 'day(s)', weekly: 'week(s)', monthly: 'month(s)' }[repeat.value] ?? '';
     for (const r of reminderBoxes) r.box.disabled = !hasDate;
@@ -200,6 +206,9 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
   });
 
   cancelBtn.addEventListener('click', () => onCancel());
+  restartBtn?.addEventListener('click', async () => {
+    try { await onRestart(); } catch (e) { showError(e?.message || 'Could not restart.'); }
+  });
 
   let confirmTimer = null;
   deleteBtn.addEventListener('click', async () => {

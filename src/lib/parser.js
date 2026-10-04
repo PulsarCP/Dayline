@@ -98,6 +98,8 @@ export function parseQuickAdd(input, now = new Date()) {
   let time = null;
   let recurrence = null;
   let endDate = null;
+  let endTime = null;
+  let overnight = false; // "22:00-02:00": ends the next day
   let categoryTag = null;
 
   const take = (res, kind) => {
@@ -122,7 +124,7 @@ export function parseQuickAdd(input, now = new Date()) {
   let r = null;
   if (!r) {
     // "every monday to friday", "every mon-fri", "every day from monday to friday"
-    const re = new RegExp(`\\bevery\\s+(?:(other|on)\\s+)?(?:day\\s+)?(?:from\\s+)?${WD_RE}s?\\s*${RANGE_SEP}\\s*${WD_RE}s?\\b`, 'i');
+    const re = new RegExp(`\\b(?:every|each|weekdays?(?:\\s+on)?)\\s+(?:(other|on)\\s+)?(?:day\\s+)?(?:from\\s+)?${WD_RE}s?\\s*${RANGE_SEP}\\s*${WD_RE}s?\\b`, 'i');
     r = consume(text, re, (m) => {
       const a = lookupWeekday(m[2]).idx;
       const b = lookupWeekday(m[3]).idx;
@@ -172,8 +174,47 @@ export function parseQuickAdd(input, now = new Date()) {
   }
   if (r) recurrence = take(r, 'repeat');
 
-  // 2. Time of day
-  let t = consume(text, /\b(?:at\s+)?(\d{1,2}):(\d{2})(?:\s*(am|pm))?\b/i, (m) => {
+  // 2. Time of day. First a range: "10:00-22:00", "9am to 5pm", "10:00AM-10:00PM", "9-5pm".
+  //    It needs a colon or am/pm somewhere, so "7-8 october" stays a date range.
+  const tr = consume(text, /\b(?:from\s+)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|\u2013|\u2014|to|until|till)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i, (m) => {
+    if (!(m[2] || m[3] || m[5] || m[6])) return undefined;
+    const min1 = Number(m[2] ?? 0);
+    const min2 = Number(m[5] ?? 0);
+    if (min1 > 59 || min2 > 59) return undefined;
+    let ap1 = m[3]?.toLowerCase();
+    let ap2 = m[6]?.toLowerCase();
+    const hour = (h, ap) => {
+      if (ap) return h >= 1 && h <= 12 ? to24(h, ap) : null;
+      return h <= 23 ? h : null;
+    };
+    let h1 = Number(m[1]);
+    let h2 = Number(m[4]);
+    if (ap2 && !ap1) { // "9-5pm": the start borrows the end's am/pm unless that would not fit
+      ap1 = ap2;
+      const a = hour(h1, ap1);
+      const b = hour(h2, ap2);
+      if (a !== null && b !== null && a * 60 + min1 >= b * 60 + min2) ap1 = ap2 === 'pm' ? 'am' : 'pm';
+    } else if (ap1 && !ap2) { // "9am-5": the end borrows, flipping to pm when it would end before it starts
+      ap2 = ap1;
+      const a = hour(h1, ap1);
+      const b = hour(h2, ap2);
+      if (a !== null && b !== null && b * 60 + min2 <= a * 60 + min1) ap2 = ap1 === 'am' ? 'pm' : 'am';
+    }
+    h1 = hour(h1, ap1);
+    h2 = hour(h2, ap2);
+    if (h1 === null || h2 === null) return undefined;
+    const start = h1 * 60 + min1;
+    const end = h2 * 60 + min2;
+    return { time: `${pad(h1)}:${pad(min1)}`, endTime: `${pad(h2)}:${pad(min2)}`, overnight: end <= start };
+  });
+  if (tr) {
+    const v = take(tr, 'time');
+    time = v.time;
+    endTime = v.endTime;
+    overnight = v.overnight;
+  }
+
+  let t = time ? null : consume(text, /\b(?:at\s+)?(\d{1,2}):(\d{2})(?:\s*(am|pm))?\b/i, (m) => {
     let h = Number(m[1]);
     const min = Number(m[2]);
     const ap = m[3]?.toLowerCase();
@@ -186,13 +227,13 @@ export function parseQuickAdd(input, now = new Date()) {
     }
     return `${pad(h)}:${pad(min)}`;
   });
-  if (!t) {
+  if (!t && !time) {
     t = consume(text, /\b(?:at\s+)?(\d{1,2})\s*(am|pm)\b/i, (m) => {
       const h = Number(m[1]);
       return h >= 1 && h <= 12 ? `${pad(to24(h, m[2].toLowerCase()))}:00` : undefined;
     });
   }
-  if (!t) {
+  if (!t && !time) {
     t = consume(text, /\b(?:at\s+)?(noon|midnight)\b/i, (m) =>
       (m[1].toLowerCase() === 'noon' ? '12:00' : '00:00'));
   }
@@ -348,6 +389,11 @@ export function parseQuickAdd(input, now = new Date()) {
     date = time && combine(today, time) <= now ? addDays(today, 1) : today;
   }
 
+  if (overnight) {
+    if (date && !endDate && !recurrence) endDate = addDays(date, 1);
+    else endTime = null; // repeating items cannot span midnight
+  }
+
   // 8. Duration: "tomorrow for 3 days" (not for repeating items)
   if (date && !endDate && !recurrence) {
     const dur = consume(text, /\bfor\s+(\d{1,2})\s+days?\b/i, (m) => {
@@ -368,5 +414,5 @@ export function parseQuickAdd(input, now = new Date()) {
       .replace(/^[\s,;:.-]+|[\s,;:-]+$/g, '');
   }
 
-  return { title, date, endDate, time, recurrence, categoryTag, matched };
+  return { title, date, endDate, time, endTime: time ? endTime : null, recurrence, categoryTag, matched };
 }

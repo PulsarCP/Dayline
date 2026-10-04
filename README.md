@@ -10,7 +10,9 @@ Everything is stored locally in `chrome.storage.local`. There is no server, no a
 - **Multi-day events**, shown on every day they span ("Day 2 of 3").
 - **Your own sections** (Work, Study, ...) with colours. Filter by section, or type `#work` when adding.
 - **Mark done**, per occurrence for repeating items. Overdue items stay visible, in red.
-- **Repeating items**: every N hours, daily, weekly (one or several weekdays), monthly, with an optional end date. An hourly repeat counts continuously from its start time (09:00 every 5 h gives 09, 14, 19, 00, 05, ...), reminds at each slot, and is ticked one reminder at a time (Today shows the slot that is due and the next one), with a **restart** button ("I just did it, next one in 5 hours").
+- **Repeating items**: every N hours, daily, weekly (one or several weekdays), monthly, with an optional end date. An hourly repeat counts continuously from its start time (09:00 every 5 h gives 09, 14, 19, 00, 05, ...), reminds at each slot, and is ticked one reminder at a time (Today shows the slot that is due and the next one), with a **restart** button ("I just did it, next one in 5 hours"). Add an end time (`every 2 hours 9:00-21:00`) to repeat only inside that window each day. On the calendar page each time of the day has its own tick box.
+- **Restart from now** works for every repeating item (button on today's row, or in the edit form): the cycle counts from this moment (every 3 days, every 2 weeks, every 5 hours, ...) and today is ticked.
+- **Time ranges** in quick-add: `10:00AM-10:00PM`, `9-5pm`, `12:30 to 13:30`, `22:00-02:00` (ends next day), with `weekday monday-friday ...` or `every mon-fri ...`.
 - **Items without a done checkbox** (notes, habits) and **items hidden from the calendar grid**: both are switches in the edit form. Notes are never overdue and never counted.
 - The popup always opens on Today.
 - **Calendar page** (calendar icon in the popup): month grid, click days to select them (Ctrl/Cmd adds, Shift selects a range), see what is on them, add an item on the selected day(s), edit or tick items. An **All** tab lists everything, including undated items, with search and filters (status, section, when, date range).
@@ -42,7 +44,7 @@ Notifications also need to be allowed for Chrome in your operating system's sett
 Requires Node 20+ (tested on 22). No dependencies.
 
 ```
-npm test                    # unit tests (about 158)
+npm test                    # unit tests (about 161)
 node tools/make-icons.mjs   # regenerate icons/
 python3 tests/e2e/e2e.py    # optional: end-to-end run in real Chromium (needs Playwright)
 ```

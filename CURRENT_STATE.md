@@ -22,7 +22,7 @@ Repo: https://github.com/PulsarCP/Dayline (branch `main`). Plain JavaScript ES m
 `pad`, `toDateStr(Date)`, `parseDateStr(str) -> Date|null`, `isValidDateStr`, `isValidTimeStr`, `timeToMinutes`, `timeStrOf(Date)`, `addDays`, `addMonths` (clamps), `daysInMonth`, `diffDays(a, b)`, `weekdayOf` (0 = Sunday), `combine(dateStr, timeStr) -> Date`.
 
 ### `src/lib/recurrence.js`
-Rule: `{freq: 'hourly'|'daily'|'weekly'|'monthly', interval, weekdays?, until?}`. Hourly (done per slot: `completedDates` holds `YYYY-MM-DD@HH:MM`; `hourlyState(item, now)` gives the row Today shows; `store.restartHourly(id)` re-anchors at now and ticks that slot): interval 1..23, needs a start time (model throws otherwise); the occurrence is the day, `slotsOn(item, date)` lists the clock times (continuous from the first start, so they shift per day when 24 is not a multiple). Reminder ids for hourly are `offset@HH:MM` (`splitReminderId`); done/snooze are per day. `normalizeRecurrence`, `occurrencesBetween(item, from, to)` (window capped at 800 days; a one-off item yields only its own `date`), `nextOccurrence`.
+Rule: `{freq: 'hourly'|'daily'|'weekly'|'monthly', interval, weekdays?, until?}`. Hourly (done per slot: `completedDates` holds `YYYY-MM-DD@HH:MM`; `hourlyState(item, now)` gives the row Today shows; `store.restart(id)` works for any repeating item: re-anchors the series at today (and at the current time if it has one) and ticks today): interval 1..23, needs a start time (model throws otherwise); the occurrence is the day, `slotsOn(item, date)` lists the clock times (continuous from the first start, so they shift per day when 24 is not a multiple). Reminder ids for hourly are `offset@HH:MM` (`splitReminderId`); done/snooze are per day. `normalizeRecurrence`, `occurrencesBetween(item, from, to)` (window capped at 800 days; a one-off item yields only its own `date`), `nextOccurrence`.
 
 ### `src/lib/model.js`
 `normalizeItem(raw, now?)` (throws on invalid; builds a fresh object from known fields), `normalizeCategory`, `normalizeSettings`, `isDoneOn(item, date)`, `lastDayOf(item)`, `LIMITS`, `TYPES`, `COLORS`, `SNOOZE_CHOICES`, `DEFAULT_SETTINGS`.
@@ -59,6 +59,9 @@ Registers listeners synchronously and delegates to the scheduler. Storage change
 `monthGrid(year, month0, weekStart)`, `dayRows(items, from, to, now)` (Map date -> rows), `selectDay(state, date, {ctrl, shift})`, `selectionTarget(selected)` (first day; last day only for an unbroken run), `filterAll(items, {query, status, category, when, from, to}, now)`, `monthTitle`. `src/app/mount.js` has `mountCalendar(document, store, {now, openOptions})`; page `src/app/app.html` (opened with `chrome.tabs.create` from the popup's calendar button; no extra permission). The panel quick-add uses typed dates, otherwise the selected day(s). The All list shows a repeating series once (no tick box).
 Popup: the "No section" filter chip was removed (the add/edit select still has "No section").
 
+Parser also returns `endTime` (time ranges; overnight `22:00-02:00` becomes a 2-day item, or no end for repeats). Hourly with `endTime` = daily window (`slotsOn`), without = continuous.
+Popup layout: body is capped at 600px (Chrome's popup limit) and only `#list` / `.edit-body` shrink and scroll, with the scrollbar hidden, so the popup never shows a scrollbar. Calendar page: day panel scrollbar hidden too; the tab itself keeps the normal page scrollbar (with `scrollbar-gutter: stable`).
+
 ## Lessons learned (keep)
 
 - **Notification `iconUrl` must be a full extension URL** (`chrome.runtime.getURL(...)`). A relative path resolves against the calling script (`src/...`) and Chrome rejects the whole notification. The unit tests with a fake could not catch this; the e2e run did.
@@ -68,7 +71,7 @@ Popup: the "No section" filter chip was removed (the add/edit select still has "
 
 ## Testing status
 
-- 158 unit tests (157 pass, 1 skipped: `navigator.locks` path, Node 22 lacks it) pass under `TZ=Europe/Rome`, `America/New_York`, `Pacific/Auckland`, `UTC`.
+- 161 unit tests (160 pass, 1 skipped: `navigator.locks` path, Node 22 lacks it) pass under `TZ=Europe/Rome`, `America/New_York`, `Pacific/Auckland`, `UTC`.
 - `tests/e2e/e2e.py` (headless Chromium 141, extension loaded unpacked): all checks pass. Covers quick-add ranges and `#tags`, sections and filters, edit form, options page (sections, settings, export, merge/replace import, corrupt file), real worker: alarm created after adding an item, notification shown, Snooze, snoozed reminder returning, Mark done clearing alarms and badge, startup catch-up, no console errors.
 
 Not verified (needs Daniel's real Chrome): how the OS actually displays notifications (Windows/macOS/Linux settings, Focus modes), `requireInteraction` behaviour per OS, popup size and focus in headed Chrome, behaviour after a real browser restart (alarm persistence is handled by re-deriving on startup, but only simulated), and the `navigator.locks` write path.

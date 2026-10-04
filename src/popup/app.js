@@ -203,7 +203,7 @@ export function mountPopup(doc, store, {
       } else {
         kids.push(h('span', { class: 'chip plain' }, 'General · no date'));
       }
-      if (p.time) kids.push(h('span', { class: 'chip' }, icon('clock'), p.time));
+      if (p.time) kids.push(h('span', { class: 'chip' }, icon('clock'), p.endTime ? `${p.time}\u2013${p.endTime}` : p.time));
       if (p.recurrence) kids.push(h('span', { class: 'chip' }, icon('repeat'), repeatLabel(p.recurrence)));
       const rem = remindersFor(p, state.settings.defaultReminderMin);
       if (rem.length) kids.push(h('span', { class: 'chip plain' }, icon('bell'), offsetLabel(rem[0].offsetMin)));
@@ -293,10 +293,11 @@ export function mountPopup(doc, store, {
         'aria-label': `${row.done ? 'Mark not done' : 'Mark done'}: ${item.title}`,
       });
     if (check.type === 'checkbox') check.checked = row.done;
-    const restart = row.slot && item.checkable !== false ? h('button', {
+    // Every repeating item can be restarted from now ("I just did it": the cycle counts from this moment).
+    const restart = item.recurrence && row.date === today ? h('button', {
       type: 'button', class: 'iconbtn restart', dataset: { restart: item.id },
-      'aria-label': `Done now, next one in ${item.recurrence.interval} h: ${item.title}`,
-      title: `Done now: restart the ${item.recurrence.interval}-hour cycle from this moment`,
+      'aria-label': `Restart from now: ${item.title}`,
+      title: `Restart from now (${repeatLabel(item.recurrence)}, counted from this moment)`,
     }, icon('rotate')) : null;
 
     const edit = h('button', {
@@ -346,6 +347,7 @@ export function mountPopup(doc, store, {
         date: p.date,
         endDate: p.endDate,
         time: p.time,
+        endTime: p.endTime,
         recurrence: p.recurrence,
         categoryId,
         type: p.time || p.endDate ? 'event' : 'task',
@@ -388,6 +390,11 @@ export function mountPopup(doc, store, {
         await refresh();
       },
       onCancel: closeEdit,
+      onRestart: async () => {
+        await store.restart(id);
+        closeEdit();
+        await refresh();
+      },
       onDelete: async () => {
         await store.remove(id);
         closeEdit();
@@ -499,7 +506,7 @@ export function mountPopup(doc, store, {
   el.list.addEventListener('click', async (ev) => {
     const rs = ev.target.closest('button.restart');
     if (rs) {
-      try { await store.restartHourly(rs.dataset.restart); } catch (e) { showError(e.message || 'Could not restart'); }
+      try { await store.restart(rs.dataset.restart); } catch (e) { showError(e.message || 'Could not restart'); }
       return refresh();
     }
     const del = ev.target.closest('button.del');
