@@ -114,6 +114,7 @@ test('formatWhen / repeatLabel / offsetLabel / remindersSummary', () => {
 test('remindersFor: undated none, all-day at the all-day time, timed uses the default', () => {
   assert.deepEqual(remindersFor({ date: null, time: null }, 10), []);
   assert.deepEqual(remindersFor({ date: '2026-10-01', time: null }, 10), [{ offsetMin: 0 }]);
+  assert.deepEqual(remindersFor({ date: '2026-10-01', time: null }, 1440), [{ offsetMin: 1440 }]); // a day ahead is kept for all-day
   assert.deepEqual(remindersFor({ date: '2026-10-01', time: '15:00' }, 30), [{ offsetMin: 30 }]);
   assert.deepEqual(remindersFor({ date: '2026-10-01', time: '15:00' }, 0), [{ offsetMin: 0 }]);
   assert.deepEqual(remindersFor({ date: '2026-10-01', time: '15:00' }, null), []);

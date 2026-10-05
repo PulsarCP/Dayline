@@ -215,15 +215,17 @@ export const REMINDER_CHOICES = Object.freeze([
   { value: 10, label: '10 min before' },
   { value: 30, label: '30 min before' },
   { value: 60, label: '1 hour before' },
+  { value: 120, label: '2 hours before' },
   { value: 1440, label: '1 day before' },
+  { value: 2880, label: '2 days before' },
 ]);
 
 /**
  * Reminders for a newly created item. Undated items get none (nothing to count from).
- * All-day items always remind at the all-day time, because "10 min before 09:00"
- * is not what anyone wants for an all-day entry.
+ * For an all-day item a short offset ("10 min before 09:00") makes no sense, so it reminds at the
+ * all-day time; a choice of a day or more ahead ("1 day before") is kept.
  */
 export function remindersFor({ date, time }, defaultMin) {
   if (!date || defaultMin == null) return [];
-  return [{ offsetMin: time ? defaultMin : 0 }];
+  return [{ offsetMin: time || defaultMin >= 1440 ? defaultMin : 0 }];
 }

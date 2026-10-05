@@ -80,8 +80,8 @@ export function createItemForm(doc, { item, categories, onSave, onCancel, onDele
   const onCal = h('input', { type: 'checkbox', id: id('oncal') });
   onCal.checked = item.showOnCalendar !== false;
   const toggles = h('div', { class: 'toggles' },
-    h('label', { class: 'toggle' }, checkable, h('span', {}, 'Has a done checkbox (turn off for notes and habits)')),
-    h('label', { class: 'toggle' }, onCal, h('span', {}, 'Show on the calendar (turn off to keep a busy daily item off the grid)')));
+    h('label', { class: 'toggle' }, checkable, h('span', {}, 'Has a done checkbox')),
+    h('label', { class: 'toggle' }, onCal, h('span', {}, 'Show on the calendar grid')));
 
   const notes = h('textarea', { class: 'textarea', id: id('notes'), maxlength: String(LIMITS.notes), rows: '3' });
   notes.value = item.notes;

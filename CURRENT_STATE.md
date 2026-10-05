@@ -2,7 +2,7 @@
 
 Handoff for the next chat. Updated after **Phase 4** (calendar page, All list with search/filters, multi-weekday and hourly repeats) and a round of improvements after Daniel used it for a few days (per-slot done and restart for hourly items, `checkable` / `showOnCalendar` item options, weekday ranges, popup always opens on Today, no visible popup scrollbar, multi-day select toggle).
 
-Repo: https://github.com/PulsarCP/Dayline (branch `main`). Plain JavaScript ES modules, Manifest V3 (v0.4.0), no build step, no runtime dependencies. Tests: `npm test` (Node built-in runner, ~140 tests). End-to-end: `python3 tests/e2e/e2e.py` (Playwright + Chromium).
+Repo: https://github.com/PulsarCP/Dayline (branch `main`). Plain JavaScript ES modules, Manifest V3 (v0.5.0), no build step, no runtime dependencies. Tests: `npm test` (Node built-in runner, ~140 tests). End-to-end: `python3 tests/e2e/e2e.py` (Playwright + Chromium).
 
 ## Decisions so far
 
@@ -62,9 +62,12 @@ Popup: the "No section" filter chip was removed (the add/edit select still has "
 Parser also returns `endTime` (time ranges; overnight `22:00-02:00` becomes a 2-day item, or no end for repeats). Hourly with `endTime` = daily window (`slotsOn`), without = continuous.
 Popup layout: body is capped at 600px (Chrome's popup limit) and only `#list` / `.edit-body` shrink and scroll, with the scrollbar hidden, so the popup never shows a scrollbar. Calendar page: day panel scrollbar hidden too; the tab itself keeps the normal page scrollbar (with `scrollbar-gutter: stable`).
 
+Round 4: "Select several days" button removed (Ctrl/Cmd and Shift-click remain, hint text explains them). Calendar panel add box has its own reminder select (default = settings); `remindersFor` keeps a day-or-more offset for all-day items (shorter ones become "at start"). Parser accepts `everyday`, `each day`, `everyweek`. Edit form in the popup: `.edit-body` must stay shrinkable (`.app > :not(.list):not(.edit-body)`), otherwise the reminders section is cut off with no scrollbar.
+
 ## Lessons learned (keep)
 
 - **Notification `iconUrl` must be a full extension URL** (`chrome.runtime.getURL(...)`). A relative path resolves against the calling script (`src/...`) and Chrome rejects the whole notification. The unit tests with a fake could not catch this; the e2e run did.
+- e2e checks that depend on "today" break near midnight (quick-add starts a series tomorrow when the time has passed); use `pin_today()` in `tests/e2e/e2e.py`.
 - Never pass `null` to `Element.replaceChildren`: it inserts the text "null".
 - Take dark-mode screenshots after the 150 ms colour transition has finished.
 - `import()` is not allowed in a service worker, so e2e tests drive the scheduler from an extension page instead.

@@ -15,13 +15,14 @@ code { background: var(--track); padding: 1px 6px; border-radius: 6px; font-size
 
 .sections { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .sections:empty::before { content: 'No sections yet.'; color: var(--faint); font-size: 13px; }
-.sec-row { display: grid; grid-template-columns: 14px 1fr 130px auto; align-items: center; gap: 10px; }
+.sec-row { display: grid; grid-template-columns: 14px 1fr auto 130px auto; align-items: center; gap: 10px; }
 .sec-row .dot { width: 12px; height: 12px; }
 .sec-row .count { color: var(--faint); font-size: 12px; white-space: nowrap; }
 .color-select { width: 130px; }
 .add-section { display: grid; grid-template-columns: 1fr 130px auto; gap: 10px; }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; align-items: end; }
+.grid .input, .grid .select, .sec-row .input, .sec-row .select, .add-section .input, .add-section .select { height: 38px; }
 
 .row-actions { display: flex; gap: 10px; margin-bottom: 14px; }
 .import { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; padding-top: 14px; border-top: 1px solid var(--border); }
@@ -34,5 +35,6 @@ code { background: var(--track); padding: 1px 6px; border-radius: 6px; font-size
 
 @media (max-width: 480px) {
   .sec-row { grid-template-columns: 14px 1fr auto; }
+  .sec-row .count { display: none; }
   .sec-row .color-select { grid-column: 2 / 3; width: 100%; }
 }

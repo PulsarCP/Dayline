@@ -5,7 +5,7 @@ Everything is stored locally in `chrome.storage.local`. There is no server, no a
 
 ## What it does
 
-- **Quick-add** with natural language and a live preview: `dentist tomorrow 3pm`, `gym every monday 7am`, `7-8 october Job Fair`, `trip tomorrow for 3 days`, `report friday #work`, `gym every thursday and friday 7am`, `drink water every 5 hours`, `study every monday to friday`, `conference mon-fri 9am`.
+- **Quick-add** with natural language and a live preview: `dentist tomorrow 3pm`, `gym every monday 7am`, `7-8 october Job Fair`, `trip tomorrow for 3 days`, `report friday #work`, `gym every thursday and friday 7am`, `drink water every 5 hours`, `study every monday to friday`, `conference mon-fri 9am`, `read everyday 8pm`.
 - **Today / Upcoming / General** views. General holds items without a date.
 - **Multi-day events**, shown on every day they span ("Day 2 of 3").
 - **Your own sections** (Work, Study, ...) with colours. Filter by section, or type `#work` when adding.
@@ -15,7 +15,7 @@ Everything is stored locally in `chrome.storage.local`. There is no server, no a
 - **Time ranges** in quick-add: `10:00AM-10:00PM`, `9-5pm`, `12:30 to 13:30`, `22:00-02:00` (ends next day), with `weekday monday-friday ...` or `every mon-fri ...`.
 - **Items without a done checkbox** (notes, habits) and **items hidden from the calendar grid**: both are switches in the edit form. Notes are never overdue and never counted.
 - The popup always opens on Today.
-- **Calendar page** (calendar icon in the popup): month grid, click days to select them (Ctrl/Cmd adds, Shift selects a range), see what is on them, add an item on the selected day(s), edit or tick items. An **All** tab lists everything, including undated items, with search and filters (status, section, when, date range).
+- **Calendar page** (calendar icon in the popup): month grid, click a day to select it (Ctrl/Cmd-click adds days, Shift-click selects a range), see what is on them, add an item on the selected day(s) with a reminder of your choice (for example 1 day before), edit or tick items. An **All** tab lists everything, including undated items, with search and filters (status, section, when, date range).
 - **Reminders**: several per item. Notifications have **Snooze** and **Mark done** buttons, reminders missed while Chrome was closed are shown on the next start, and the toolbar badge counts what is open today.
 - **Edit** any item (click it), **export / import** a JSON backup, light and dark themes.
 

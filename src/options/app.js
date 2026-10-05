@@ -123,7 +123,7 @@ export function mountOptions(doc, store, {
       await refresh();
     }));
 
-    return h('li', { class: 'sec-row' }, dot, h('div', {}, name, count), color, del);
+    return h('li', { class: 'sec-row' }, dot, name, count, color, del);
   }
 
   function renderSections() {

@@ -162,7 +162,7 @@ export function parseQuickAdd(input, now = new Date()) {
   }
   if (!r) r = consume(text, /\bhourly\b/i, () => ({ freq: 'hourly', interval: 1 }));
   if (!r) {
-    r = consume(text, /\bevery\s+(?:(\d{1,3}|other)\s+)?(day|week|month)s?\b/i, (m) => {
+    r = consume(text, /\b(?:every|each)\s*(?:(\d{1,3}|other)\s+)?(day|week|month)s?\b/i, (m) => {
       const n = m[1] ? (m[1].toLowerCase() === 'other' ? 2 : Number(m[1])) : 1;
       const freq = { day: 'daily', week: 'weekly', month: 'monthly' }[m[2].toLowerCase()];
       return safeRecurrence({ freq, interval: n });

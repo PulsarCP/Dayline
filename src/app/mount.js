@@ -10,7 +10,7 @@ import { slotsOn } from '../lib/recurrence.js';
 import { COLORS } from '../lib/model.js';
 import { parseQuickAdd } from '../lib/parser.js';
 import {
-  categoryOf, formatDate, formatDay, formatRange, formatWhen, remindersFor, remindersSummary,
+  categoryOf, formatDate, formatDay, formatRange, formatWhen, REMINDER_CHOICES, remindersFor, remindersSummary,
   repeatLabel, spanLabel,
 } from '../lib/views.js';
 import { createH, createIcon } from '../ui/dom.js';
@@ -27,7 +27,7 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
   const el = {
     views: $('views'), calView: $('calendar-view'), allView: $('all-view'),
     title: $('month-title'), grid: $('grid'), dow: $('dow'), panel: $('panel'),
-    prev: $('prev'), next: $('next'), today: $('today-btn'), multi: $('multi-btn'),
+    prev: $('prev'), next: $('next'), today: $('today-btn'),
     filters: $('all-filters'), list: $('all-list'), options: $('open-options'),
   };
 
@@ -36,13 +36,13 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
     view: 'calendar',
     year: t0.getFullYear(),
     month: t0.getMonth(),
-    multi: false, // "Select several days" mode: every click adds or removes a day
     selected: [toDateStr(t0)],
     anchor: toDateStr(t0),
     items: [], categories: [], settings: {},
     editing: null, // {id} | {draft: item}
     filter: { query: '', status: 'open', category: 'all', when: 'any', from: '', to: '' },
     error: '',
+    quickReminder: undefined, // reminder chosen in the panel's add box (undefined = the default setting)
   };
   const todayStr = () => toDateStr(now());
 
@@ -128,14 +128,14 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
   }
 
   function onDayClick(date, ev) {
-    const next = selectDay(state, date, { ctrl: ev.ctrlKey || ev.metaKey || state.multi, shift: ev.shiftKey });
+    const next = selectDay(state, date, { ctrl: ev.ctrlKey || ev.metaKey, shift: ev.shiftKey });
     state.selected = next.selected;
     state.anchor = next.anchor;
     state.editing = null;
     state.error = '';
     // Clicking a greyed-out day of a neighbouring month jumps to that month.
     const d = parseDateStr(date);
-    if (d.getMonth() !== state.month && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !state.multi) showMonth(d.getFullYear(), d.getMonth());
+    if (d.getMonth() !== state.month && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey) showMonth(d.getFullYear(), d.getMonth());
     renderGrid();
     renderPanel();
     el.grid.querySelector(`[data-date="${date}"]`)?.focus();
@@ -151,10 +151,6 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
   }
 
   const shiftMonth = (n) => { showMonth(state.year, state.month + n); renderGrid(); };
-  el.multi.addEventListener('click', () => {
-    state.multi = !state.multi;
-    el.multi.setAttribute('aria-pressed', String(state.multi));
-  });
   el.prev.addEventListener('click', () => shiftMonth(-1));
   el.next.addEventListener('click', () => shiftMonth(1));
   el.today.addEventListener('click', () => {
@@ -235,11 +231,15 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
       class: 'input', id: 'quick-input', type: 'text', maxlength: '300', spellcheck: 'false', autocomplete: 'off',
       placeholder: `Add to ${targetLabel()}…  e.g. “dentist 3pm”`, 'aria-label': 'Quick add to the selected days',
     });
+    const reminder = h('select', { class: 'select', id: 'quick-reminder', 'aria-label': 'Reminder', title: 'Reminder for the new item' },
+      REMINDER_CHOICES.map((c) => h('option', { value: String(c.value ?? 'none') }, c.label)));
+    reminder.value = String(state.quickReminder === undefined ? (state.settings.defaultReminderMin ?? 'none') : (state.quickReminder ?? 'none'));
+    reminder.addEventListener('change', () => { state.quickReminder = reminder.value === 'none' ? null : Number(reminder.value); });
     const submit = h('button', { type: 'submit', class: 'btn primary', id: 'quick-submit' }, icon('plus'), 'Add');
     const details = h('button', { type: 'button', class: 'btn', id: 'quick-details' }, 'More options');
     const err = h('div', { class: 'form-error', role: 'alert', hidden: !state.error }, state.error);
     const form = h('form', { class: 'quick', id: 'quick-form' },
-      h('div', { class: 'quick-row' }, input, submit), err, h('div', { class: 'quick-actions' }, details));
+      h('div', { class: 'quick-row' }, input, submit), err, h('div', { class: 'quick-actions' }, h('label', { class: 'rem-pick' }, icon('bell'), reminder), details));
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const text = input.value.trim();
@@ -260,13 +260,15 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
       const draft = {
         title: input.value.trim(), notes: '', type: endDate ? 'event' : 'task', date, endDate,
         time: null, endTime: null, recurrence: null, categoryId: null,
-        reminders: remindersFor({ date, time: null }, state.settings.defaultReminderMin),
+        reminders: remindersFor({ date, time: null }, chosenReminder()),
       };
       state.editing = { draft };
       render();
     });
     return form;
   }
+
+  const chosenReminder = () => (state.quickReminder === undefined ? (state.settings.defaultReminderMin ?? null) : state.quickReminder);
 
   async function resolveSection(tag) {
     if (!tag) return null;
@@ -297,7 +299,7 @@ export function mountCalendar(doc, store, { now = () => new Date(), openOptions 
     const item = await store.add({
       title: p.title, date, endDate, time: p.time, endTime: p.endTime, recurrence: p.recurrence, categoryId,
       type: p.time || endDate ? 'event' : 'task',
-      reminders: remindersFor({ date, time: p.time }, state.settings.defaultReminderMin),
+      reminders: remindersFor({ date, time: p.time }, chosenReminder()),
     });
     if (state.view === 'calendar' && date) {
       const d = parseDateStr(date);

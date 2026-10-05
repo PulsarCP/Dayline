@@ -24,7 +24,6 @@
           <div class="month-bar">
             <h1 id="month-title" aria-live="polite"></h1>
             <div class="month-nav">
-              <button type="button" class="btn toggle-btn" id="multi-btn" aria-pressed="false" title="While on, each click adds or removes a day, so you can pick days that are not next to each other">Select several days</button>
               <button type="button" class="btn" id="today-btn">Today</button>
               <button type="button" class="iconbtn" id="prev" aria-label="Previous month" title="Previous month">&#8249;</button>
               <button type="button" class="iconbtn" id="next" aria-label="Next month" title="Next month">&#8250;</button>
@@ -32,7 +31,7 @@
           </div>
           <div class="dow" id="dow" aria-hidden="true"></div>
           <div class="grid" id="grid" role="grid" aria-label="Days"></div>
-          <p class="hint">Click a day to select it. To pick several days, turn on <strong>Select several days</strong> (or hold Ctrl, or Cmd on a Mac, while clicking). To pick a stretch of days, click the first one, then hold Shift and click the last one.</p>
+          <p class="hint">Click a day to select it. Hold Ctrl (Cmd on a Mac) and click to add more days, or hold Shift and click to select a stretch of days.</p>
         </section>
 
         <aside class="day-panel" id="panel" aria-label="Selected days"></aside>

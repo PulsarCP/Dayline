@@ -191,4 +191,4 @@ input.check:checked::after {
 .acts .restart { color: var(--accent); }
 
 /* Only the list may shrink when the popup hits its 600px cap. */
-.app > :not(.list) { flex-shrink: 0; }
+.app > :not(.list):not(.edit-body) { flex-shrink: 0; }

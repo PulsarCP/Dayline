@@ -33,6 +33,11 @@ def run(page, body):
     return page.evaluate(f"async () => {{ {STORE} {body} }}")
 
 
+def pin_today(page_, title, time_="00:30"):
+    """Quick-add starts a series tomorrow when run late at night; pin it to today so the checks do not depend on the clock."""
+    page_.evaluate("async ([t, d, tm]) => { const { createStore, createChromeBackend } = await import('/src/lib/store.js'); const s = createStore(createChromeBackend()); const it = (await s.list()).find(i => i.title === t); await s.update(it.id, { date: d, time: tm }); }", [title, page_.evaluate("() => new Date().toLocaleDateString('sv-SE')"), time_])
+
+
 with sync_playwright() as p:
     ctx = p.chromium.launch_persistent_context(
         tempfile.mkdtemp(), headless=False, accept_downloads=True,
@@ -215,7 +220,8 @@ with sync_playwright() as p:
     check("worker created the reminder alarm after the item was added", rem_name in alarms, str(alarms))
     check("worker created the hourly and midnight alarms", "dl-tick" in alarms and "dl-midnight" in alarms, str(alarms))
     badge = page.evaluate("async () => await chrome.action.getBadgeText({})")
-    check("toolbar badge shows the open count", badge == "1", repr(badge))
+    due_today = soon["date"] == iso(0)  # near midnight the test item falls on tomorrow and is not counted yet
+    check("toolbar badge shows the open count", badge == ("1" if due_today else ""), repr(badge))
 
     page.evaluate(f"chrome.alarms.create('{rem_name}', {{ when: Date.now() + 1000 }})")
     page.wait_for_timeout(3000)
@@ -322,6 +328,7 @@ with sync_playwright() as p:
     check("popup still opens on Today after leaving it on General", page.get_attribute(".tab[data-tab=today]", "aria-selected") == "true")
     check("settings button is just 'Settings'", page.get_attribute("#open-options", "title") == "Settings")
     add("Drink water every 5 hours"); add("Standup every monday to friday 9am"); add("Note to self today 23:59")
+    pin_today(page, "Drink water")
     run(page, "const it = (await store.list()).find(i => i.title === 'Note to self'); await store.update(it.id, { checkable: false, showOnCalendar: false });")
     page.reload(); page.wait_for_selector("#add-input"); page.wait_for_timeout(300)
     standup = next(i for i in items() if i["title"] == "Standup")
@@ -344,8 +351,8 @@ with sync_playwright() as p:
     cal2.wait_for_timeout(200)  # today is selected when the page opens
     check("...but is listed in the day panel with a marker", cal2.locator(".day-block .row", has_text="Note to self").count() == 1 and cal2.locator(".day-block .row", has_text="Hidden on grid").count() == 1)
     nxt = cal2.locator(".day:not(.out)").nth(10); nxt2 = cal2.locator(".day:not(.out)").nth(12)
-    cal2.click("#multi-btn"); nxt.click(); nxt2.click()
-    check("'Select several days' picks separate days with plain clicks", cal2.locator(".day.sel").count() == 3, str(cal2.locator(".day.sel").count()))
+    nxt.click(modifiers=["Control"]); nxt2.click(modifiers=["Control"])
+    check("Ctrl-click picks separate days", cal2.locator(".day.sel").count() == 3, str(cal2.locator(".day.sel").count()))
     cal2.click('.vtab[data-view=all]'); cal2.wait_for_selector("#f-query")
     w0 = cal2.evaluate("() => document.documentElement.clientWidth")
     cal2.fill("#f-query", "zzzz-no-match"); cal2.wait_for_timeout(200)
@@ -358,6 +365,7 @@ with sync_playwright() as p:
     run(page, "for (const i of await store.list()) await store.remove(i.id);")
     page.reload(); page.wait_for_selector("#add-input")
     add("Pills every 3 days 9:00"); add("Drink water every 5 hours"); add("Standup weekday monday-friday 10:00AM-10:00PM X")
+    pin_today(page, "Drink water")
     st = next(i for i in items() if i["title"] == "Standup X")
     check("'weekday monday-friday 10:00AM-10:00PM X' sets days and end time", st["recurrence"]["weekdays"] == [1, 2, 3, 4, 5] and st["time"] == "10:00" and st["endTime"] == "22:00", str(st))
     pills = next(i for i in items() if i["title"] == "Pills")
@@ -389,6 +397,30 @@ with sync_playwright() as p:
     check("ticking one time marks only that time", len(w["completedDates"]) == 1 and "@" in w["completedDates"][0], str(w["completedDates"]))
     cal3.screenshot(path=f"{SHOTS}/16-calendar-slots.png", full_page=True)
     cal3.close()
+
+    # ---------- 12. round 4: edit form reachable without scrollbar, everyday, reminders in the panel ----------
+    run(page, "for (const i of await store.list()) await store.remove(i.id);")
+    add("Read everyday 8pm")
+    check("'everyday' is a daily repeat", any(i["title"] == "Read" and i["recurrence"] == {"freq": "daily", "interval": 1} for i in items()))
+    rd = next(i for i in items() if i["title"] == "Read")
+    run(page, f"await store.update('{rd['id']}', {{ date: '{iso(0)}', time: '23:59' }});")  # make sure it is on Today
+    page.set_viewport_size({"width": 380, "height": 600}); page.reload(); page.wait_for_selector(".row")
+    page.locator(".row .body").first.click(); page.wait_for_selector("#edit-body form")
+    page.locator("#edit-body").evaluate("e => e.scrollTo(0, e.scrollHeight)"); page.wait_for_timeout(200)
+    info = page.evaluate("() => { const e = document.getElementById('edit-body'); const p = e.querySelector('.pills'); const r = p.getBoundingClientRect(); const b = e.getBoundingClientRect(); return { scrollable: e.scrollHeight > e.clientHeight, inView: r.top >= b.top - 1 && r.bottom <= b.bottom + 1, doc: document.documentElement.scrollHeight, win: innerHeight }; }")
+    check("edit form scrolls (no bar) so the reminders can be reached", info["scrollable"] and info["inView"] and info["doc"] <= info["win"], str(info))
+    page.locator("#edit-body .pills label", has_text="1 day before").click()
+    page.locator("#edit-body button[type=submit]").click(); page.wait_for_timeout(500)
+    check("a 'before' reminder can be chosen and saved", any(i["title"] == "Read" and {"offsetMin": 1440} in i["reminders"] for i in items()), str([i["reminders"] for i in items()]))
+    page.set_viewport_size({"width": 380, "height": 640})
+    cal4 = ctx.new_page(); watch(cal4); cal4.set_viewport_size({"width": 1180, "height": 800})
+    cal4.goto(f"chrome-extension://{ext_id}/src/app/app.html"); cal4.wait_for_selector(".day")
+    check("no 'Select several days' button any more", cal4.locator("#multi-btn").count() == 0)
+    cal4.select_option("#quick-reminder", "1440")
+    cal4.fill("#quick-input", "Passport renewal"); cal4.press("#quick-input", "Enter"); cal4.wait_for_timeout(600)
+    pr = next(i for i in items() if i["title"] == "Passport renewal")
+    check("the panel's reminder choice is used", pr["reminders"] == [{"offsetMin": 1440}], str(pr["reminders"]))
+    cal4.close()
 
     real_errors = [e for e in errors if "favicon" not in e]
     check("no console errors or warnings on any page", not real_errors, "; ".join(real_errors[:5]))

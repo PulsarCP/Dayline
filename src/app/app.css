@@ -94,3 +94,8 @@ body { min-height: 100vh; }
 .slot.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); text-decoration: line-through; }
 .day-panel { scrollbar-width: none; }
 .day-panel::-webkit-scrollbar { display: none; }
+
+.quick-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rem-pick { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.rem-pick svg { width: 14px; height: 14px; }
+.rem-pick .select { padding-top: 6px; padding-bottom: 6px; }
