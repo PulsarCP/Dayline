@@ -207,3 +207,10 @@ test('quick-add: time ranges set the end time', () => {
 });
 
 const occurrencesOf = (item, a, b) => occurrencesBetween(item, a, b);
+
+test('review: relative time replaces a time range instead of leaving a stale endTime', () => {
+  const now = new Date(2026, 9, 6, 12, 22);
+  const r = parseQuickAdd('call 7-8am in 2 hours', now);
+  assert.equal(r.time, '14:22');
+  assert.equal(r.endTime, null);
+});

@@ -77,7 +77,7 @@ test('monthly: clamps to month end and keeps the original day afterwards', () =>
 
 test('window is capped so a huge range cannot hang', () => {
   const it = item('2026-01-01', { freq: 'daily', interval: 1 });
-  const out = occurrencesBetween(it, '2026-01-01', '2999-12-31');
+  const out = occurrencesBetween(it, '2026-01-01', '2100-12-31');
   assert.equal(out.length, 801);
 });
 

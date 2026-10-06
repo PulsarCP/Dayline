@@ -15,7 +15,7 @@ export function parseDateStr(s) {
   const y = Number(m[1]);
   const mo = Number(m[2]);
   const d = Number(m[3]);
-  if (y < 1970 || y > 2999) return null;
+  if (y < 1970 || y > 2100) return null;
   const dt = new Date(y, mo - 1, d);
   if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
   return dt;

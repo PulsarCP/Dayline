@@ -252,6 +252,7 @@ export function parseQuickAdd(input, now = new Date()) {
       const at = new Date(now.getTime() + ms);
       date = toDateStr(at);
       time = timeStrOf(at);
+      endTime = null; // the relative time replaces any range
     } else if (unit.startsWith('d')) {
       date = addDays(today, n);
     } else if (unit.startsWith('w')) {
